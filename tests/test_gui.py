@@ -1,0 +1,102 @@
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from openpls import Model, fit
+from openpls.gui_helpers import guess_syntax, model_to_dot, prepare_data, to_excel
+from openpls.simulate import simulate
+
+APP = str(Path(__file__).parents[1] / "openpls" / "app.py")
+
+SYNTAX = """
+XI1  =~ xi1_1 + xi1_2 + xi1_3   # commentaire
+XI2  <~ xi2_1 + xi2_2 + xi2_3
+ETA1 =~ eta1_1 + eta1_2 + eta1_3
+ETA2 =~ eta2_1 + eta2_2 + eta2_3
+ETA1 ~ XI1 + XI2
+ETA2 ~ ETA1
+"""
+
+
+def test_syntax_roundtrip():
+    m = Model.from_syntax(SYNTAX)
+    assert m.modes == {"XI1": "A", "XI2": "B", "ETA1": "A", "ETA2": "A"}
+    assert set(m.structural) == {("XI1", "ETA1"), ("XI2", "ETA1"), ("ETA1", "ETA2")}
+    m2 = Model.from_syntax(m.to_syntax())
+    assert m2.measurement == m.measurement and set(m2.structural) == set(m.structural) and m2.modes == m.modes
+
+
+@pytest.mark.parametrize("bad", ["XI1 xi1_1", "", "A =~ a1\nA =~ a2", "A =~ a1\nB ~ A"])
+def test_syntax_errors(bad):
+    with pytest.raises(ValueError):
+        Model.from_syntax(bad)
+
+
+def test_guess_syntax_groups_by_prefix():
+    s = guess_syntax(["sat1", "sat2", "sat_3", "img-1", "img-2", "age"])
+    m = Model.from_syntax(s)
+    assert m.measurement == {"SAT": ["sat1", "sat2", "sat_3"], "IMG": ["img-1", "img-2"], "AGE": ["age"]}
+
+
+def test_dot_and_excel():
+    d = simulate(200)
+    m = Model.from_syntax(SYNTAX)
+    r = fit(d, m)
+    dot = model_to_dot(m, r)
+    assert dot.startswith("digraph") and "R² =" in dot and f"{r.path_coefficients.loc['ETA1', 'ETA2']:.3f}" in dot
+    xls = to_excel({"Chemins": r.path_coefficients, "Chargements": r.outer_loadings.to_frame()})
+    back = pd.read_excel(pd.io.common.BytesIO(xls), sheet_name=None)
+    assert set(back) == {"Chemins", "Chargements"}
+
+
+def test_prepare_data_listwise():
+    d = simulate(100).astype(object)
+    d.iloc[0, 0] = None
+    d.iloc[1, 2] = "n/a"
+    clean, warns = prepare_data(d, Model.from_syntax(SYNTAX))
+    assert len(clean) == 98 and warns
+
+
+# ------------------------------------------------------------------ application complète
+def _app():
+    from streamlit.testing.v1 import AppTest
+
+    return AppTest.from_file(APP, default_timeout=120)
+
+
+def _btn(at, label):
+    return next(b for b in at.button if label in b.label)
+
+
+def test_app_example_end_to_end():
+    at = _app().run()
+    assert not at.exception, at.exception
+    _btn(at, "Estimer").click().run()
+    assert not at.exception, at.exception
+    assert any("Résultats" in t.value for t in at.title)
+    at.number_input(key="n_boot").set_value(200).run()
+    _btn(at, "bootstrap").click().run()
+    assert not at.exception, at.exception
+    subs = [s.value for s in at.subheader]
+    assert "Analyse de médiation" in subs and "Effets indirects spécifiques" in subs
+
+
+def test_app_syntax_error_is_reported():
+    at = _app().run()
+    at.text_area(key="syntax").set_value("XI1 =~ colonne_inexistante\nETA1 =~ eta1_1\nETA1 ~ XI1").run()
+    assert not at.exception
+    assert any("colonne_inexistante" in e.value for e in at.error)
+    assert _btn(at, "Estimer").disabled
+    at.text_area(key="syntax").set_value("XI1 =~ xi1_1\nETA ~ XI1").run()
+    assert any("variable latente inconnue" in e.value for e in at.error)
+
+
+def test_f2_with_isolated_latent_is_finite():
+    import numpy as np
+    from openpls import f_squared
+
+    d = simulate(300)
+    m = Model.from_syntax(SYNTAX)
+    f2 = f_squared(fit(d, m), d)  # retirer XI2 -> ETA1 isole XI2
+    assert np.isfinite(f2["f2"]).all() and (f2["f2"] > 0).all()

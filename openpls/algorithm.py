@@ -80,6 +80,10 @@ def _inner_weights(scores: np.ndarray, model: Model, scheme: str) -> np.ndarray:
                 e[pred, j] = _ols(scores[:, j], scores[:, pred])
     else:
         raise ValueError(f"Schéma inconnu : {scheme}")
+    # Latente isolée (aucun voisin structurel, ex. modèle réduit pour f²) : proxy = elle-même
+    for j in range(k):
+        if not adj[:, j].any():
+            e[j, j] = 1.0
     return e
 
 

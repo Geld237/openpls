@@ -48,6 +48,55 @@ class Model:
         if np.linalg.matrix_power(self.path, len(self.latents)).any():
             raise ValueError("Le modèle structurel contient un cycle")
 
+    # ------------------------------------------------------------------ syntaxe
+    @classmethod
+    def from_syntax(cls, text: str) -> "Model":
+        """Construit un modèle à partir d'une syntaxe inspirée de lavaan :
+
+            Image        =~ img1 + img2 + img3     # réflectif (mode A)
+            Prix         <~ prix1 + prix2          # formatif (mode B)
+            Satisfaction ~  Image + Prix           # chemins structurels
+        """
+        measurement: dict[str, list[str]] = {}
+        modes: dict[str, str] = {}
+        structural: list[tuple[str, str]] = []
+        for no, raw in enumerate(text.splitlines(), 1):
+            line = raw.split("#", 1)[0].strip()
+            if not line:
+                continue
+            for op, mode in (("=~", "A"), ("<~", "B"), ("~", None)):
+                if op in line:
+                    lhs, rhs = (s.strip() for s in line.split(op, 1))
+                    break
+            else:
+                raise ValueError(f"Ligne {no} : opérateur manquant (=~, <~ ou ~) : {raw!r}")
+            terms = [t.strip() for t in rhs.split("+") if t.strip()]
+            if not lhs or not terms or not lhs.replace("_", "").replace(".", "").isalnum():
+                raise ValueError(f"Ligne {no} : syntaxe invalide : {raw!r}")
+            if mode:
+                if lhs in measurement:
+                    raise ValueError(f"Ligne {no} : {lhs} est déjà défini")
+                measurement[lhs] = terms
+                modes[lhs] = mode
+            else:
+                structural.extend((src, lhs) for src in terms)
+        if not measurement:
+            raise ValueError("Aucune variable latente définie (utilise =~ ou <~)")
+        return cls(measurement, structural, modes)
+
+    def to_syntax(self) -> str:
+        lines = ["# Modèle de mesure"]
+        width = max(len(lv) for lv in self.latents)
+        for lv in self.latents:
+            op = "=~" if self.modes[lv] == "A" else "<~"
+            lines.append(f"{lv:<{width}} {op} " + " + ".join(self.measurement[lv]))
+        lines.append("\n# Modèle structurel")
+        for j, lv in enumerate(self.latents):
+            pred = self.predecessors(j)
+            if len(pred):
+                lines.append(f"{lv:<{width}} ~  " + " + ".join(self.latents[i] for i in pred))
+        return "\n".join(lines)
+
     @property
     def indicators(self) -> list[str]:
         return [ind for lv in self.latents for ind in self.measurement[lv]]
