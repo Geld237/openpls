@@ -49,7 +49,9 @@ def rescaled_scores(res, data: pd.DataFrame, scale: tuple[float, float] | dict |
         raw = w / sd[w.index]
         rw = raw / raw.sum()
         weights[lv] = rw
-        scores[lv] = x100[list(rw.index)].to_numpy() @ rw.to_numpy()
+        # moyenne pondérée (poids positifs de somme 1) de valeurs dans [0, 100] : on borne pour effacer
+        # les écarts d'arrondi de l'ordre de 1e-14 (observés avec la bibliothèque Accelerate de macOS)
+        scores[lv] = np.clip(x100[list(rw.index)].to_numpy() @ rw.to_numpy(), 0.0, 100.0)
     idx = pd.MultiIndex.from_tuples([(lv, i) for lv in model.latents for i in weights[lv].index],
                                     names=["latent", "indicator"])
     w_all = pd.Series(np.concatenate([weights[lv].to_numpy() for lv in model.latents]), index=idx)
