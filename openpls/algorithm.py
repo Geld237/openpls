@@ -8,12 +8,17 @@ Boucle itérative :
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 from .model import Model
+
+
+class ConvergenceWarning(UserWarning):
+    """L'algorithme PLS n'a pas convergé : les estimations ne sont pas fiables."""
 
 
 def _standardize(a: np.ndarray) -> np.ndarray:
@@ -44,6 +49,9 @@ class PLSResult:
     stage1: "PLSResult | None" = None  # modération en deux étapes : estimation sans interaction
     moderation: str | None = None
     hoc_method: str | None = None      # approche d'ordre supérieur utilisée
+    scheme: str = "path"
+    latent_correlations: pd.DataFrame | None = None  # corrélations entre latentes (corrigées si PLSc)
+    interaction_scale: dict | None = None  # {"X:M": (moyenne, écart-type) du produit Z_X·Z_M}
 
     @property
     def measurement_result(self) -> "PLSResult":
@@ -117,14 +125,19 @@ def fit(
     if model.higher_order:
         from .higher_order import fit_higher_order
 
-        return fit_higher_order(data, model, method=hoc_method, scheme=scheme, max_iter=max_iter,
-                                tol=tol, consistent=consistent)
-    if model.interactions:
+        res = fit_higher_order(data, model, method=hoc_method, scheme=scheme, max_iter=max_iter,
+                               tol=tol, consistent=consistent)
+    elif model.interactions:
         from .moderation import fit_moderated
 
-        return fit_moderated(data, model, method=moderation, scheme=scheme, max_iter=max_iter,
-                             tol=tol, consistent=consistent)
-    return _fit_plain(data, model, scheme=scheme, max_iter=max_iter, tol=tol, consistent=consistent)
+        res = fit_moderated(data, model, method=moderation, scheme=scheme, max_iter=max_iter,
+                            tol=tol, consistent=consistent)
+    else:
+        res = _fit_plain(data, model, scheme=scheme, max_iter=max_iter, tol=tol, consistent=consistent)
+    if not (res.converged and res.measurement_result.converged):
+        warnings.warn(f"PLS non convergé après {max_iter} itérations : estimations non fiables "
+                      "(vérifie le modèle ou augmente max_iter)", ConvergenceWarning, stacklevel=2)
+    return res
 
 
 def _fit_plain(data, model, scheme="path", max_iter=300, tol=1e-7, consistent=False) -> PLSResult:
@@ -214,13 +227,7 @@ def _fit_plain(data, model, scheme="path", max_iter=300, tol=1e-7, consistent=Fa
         loadings = np.concatenate([weights[j] * c_fac[j] if c_fac[j] != 1 else loadings[b]
                                    for j, b in enumerate(blocks)])
 
-    paths = np.zeros((k, k))
-    r2 = {}
-    for j in model.endogenous():
-        pred = model.predecessors(j)
-        beta = np.linalg.solve(r_lat[np.ix_(pred, pred)], r_lat[pred, j])
-        paths[pred, j] = beta
-        r2[model.latents[j]] = float(beta @ r_lat[pred, j])
+    paths, r2 = _structural_from_corr(model, r_lat)
 
     return PLSResult(
         model=model,
@@ -234,4 +241,19 @@ def _fit_plain(data, model, scheme="path", max_iter=300, tol=1e-7, consistent=Fa
         iterations=it,
         converged=converged,
         consistent=consistent,
+        scheme=scheme,
+        latent_correlations=pd.DataFrame(r_lat, index=model.latents, columns=model.latents),
     )
+
+
+def _structural_from_corr(model: Model, r_lat: np.ndarray):
+    """Coefficients de chemin (MCO standardisés) et R² à partir des corrélations entre latentes."""
+    k = len(model.latents)
+    paths = np.zeros((k, k))
+    r2 = {}
+    for j in model.endogenous():
+        pred = model.predecessors(j)
+        beta = np.linalg.solve(r_lat[np.ix_(pred, pred)], r_lat[pred, j])
+        paths[pred, j] = beta
+        r2[model.latents[j]] = float(beta @ r_lat[pred, j])
+    return paths, r2

@@ -24,14 +24,22 @@ ref.fit(d, obj="MLW")
 ins = ref.inspect()
 chi2_ref = semopy.calc_stats(ref).T.loc["chi2", "Value"]
 print(f"chi2 : OpenPLS {ours.fit_indices['chi2']:.4f}  semopy {chi2_ref:.4f}")
-worst = 0.0
+worst, compared = 0.0, 0
+# semopy note « ind ~ LV » les chargements et « LV1 ~ LV2 » les chemins ; « a ~~ b » les (co)variances
 for _, r in ins.iterrows():
-    key = f"{r.rval} =~ {r.lval}" if r.op == "=~" else f"{r.lval} ~ {r.rval}" if r.op == "~" else None
+    if r.op == "~":
+        key = f"{r.rval} =~ {r.lval}" if r.lval in d.columns else f"{r.lval} ~ {r.rval}"
+    elif r.op == "~~":
+        key = next((k for k in (f"{r.lval} ~~ {r.rval}", f"{r.rval} ~~ {r.lval}", f"{r.lval} ~~ {r.rval} (résiduelle)")
+                    if k in ours.estimates.index), None)
+    else:
+        key = None
     if key in ours.estimates.index:
         diff = abs(r.Estimate - ours.estimates.loc[key, "estimate"])
-        worst = max(worst, diff)
-        print(f"{key:<16} semopy {r.Estimate: .4f}  OpenPLS {ours.estimates.loc[key, 'estimate']: .4f}")
-print(f"écart maximal : {worst:.2e}")
+        worst, compared = max(worst, diff), compared + 1
+        print(f"{key:<28} semopy {r.Estimate: .4f}  OpenPLS {ours.estimates.loc[key, 'estimate']: .4f}")
+print(f"{compared} paramètres comparés sur {len(ours.estimates)} ; écart maximal : {worst:.2e}")
+assert compared == len(ours.estimates), "tous les paramètres libres doivent être comparés"
 assert worst < 2e-3 and abs(chi2_ref - ours.fit_indices["chi2"]) < 1e-2
 
 

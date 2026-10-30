@@ -55,7 +55,8 @@ def fit_moderated(data: pd.DataFrame, model: Model, method: str = "two_stage", *
             cols[f"{name}__score"] = _z(stage1.scores[a].to_numpy()) * _z(stage1.scores[b].to_numpy())
             measurement[name] = [f"{name}__score"]
         aug_data = pd.DataFrame(cols, index=data.index)
-        # étape 2 : indicateurs uniques -> pas de correction PLSc (rho_A = 1)
+        # étape 2 : indicateurs uniques, estimés en PLS ; la correction PLSc éventuelle est appliquée
+        # ensuite sur les corrélations (Becker, Ringle & Sarstedt 2018)
         kw2 = {**fit_kwargs, "consistent": False}
         modes = {lv: "A" for lv in measurement}
     else:
@@ -94,25 +95,62 @@ def fit_moderated(data: pd.DataFrame, model: Model, method: str = "two_stage", *
     res.spec = model
     res.stage1 = stage1
     res.moderation = method
+    names = {interaction_name(a, b): (a, b) for a, b, _ in model.interactions}
+
+    if method == "two_stage" and fit_kwargs.get("consistent"):
+        # PLSc en deux étapes : fiabilités de l'étape 1 (rho_A) pour les effets simples ; pour le produit
+        # de deux composites standardisés (normalité), rel(XM) = (ρX·ρM + r²) / (1 + r²), r = corr(X̂, M̂)
+        lvs = aug_model.latents
+        r = res.scores[lvs].corr().to_numpy()
+        rel = np.array([1.0 if lv in names else float(stage1.rho_a[lv]) for lv in lvs])
+        for name, (a, b) in names.items():
+            rab = r[lvs.index(a), lvs.index(b)]
+            rel[lvs.index(name)] = (rel[lvs.index(a)] * rel[lvs.index(b)] + rab**2) / (1 + rab**2)
+        r_lat = r / np.sqrt(np.outer(rel, rel))
+        np.fill_diagonal(r_lat, 1.0)
+        from .algorithm import _structural_from_corr
+
+        paths, r2 = _structural_from_corr(aug_model, r_lat)
+        res.path_coefficients = pd.DataFrame(paths, index=lvs, columns=lvs)
+        res.r_squared = pd.Series(r2)
+        res.rho_a = pd.Series(rel, index=lvs)
+        res.latent_correlations = pd.DataFrame(r_lat, index=lvs, columns=lvs)
+        res.consistent = True
+
+    # échelle du terme d'interaction : le produit Z_X·Z_M (moyenne r, écart-type ≈ √(1 + r²)) est
+    # re-standardisé dans le modèle ; il faut le savoir pour calculer les pentes simples
+    res.interaction_scale = {}
+    for name, (a, b) in names.items():
+        if res.consistent and res.latent_correlations is not None:
+            rab = float(res.latent_correlations.loc[a, b])
+            res.interaction_scale[name] = (rab, float(np.sqrt(1 + rab**2)))
+        else:
+            src = res.stage1.scores if res.stage1 is not None else res.scores
+            prod = _z(src[a].to_numpy()) * _z(src[b].to_numpy())
+            res.interaction_scale[name] = (float(prod.mean()), float(prod.std(ddof=1)))
     return res
 
 
 def simple_slopes(res, x: str, m: str, target: str, levels=(-1.0, 0.0, 1.0)) -> pd.DataFrame:
     """Pente de X sur la cible pour plusieurs niveaux du modérateur M (en écarts-types).
 
-    Avec Y = b_x X + b_m M + b_xm X·M, la pente de X quand M = m vaut b_x + b_xm · m."""
+    Le terme d'interaction du modèle est le produit standardisé (X·M - μ) / σ, avec μ = corr(X, M)
+    et σ ≈ √(1 + corr²). Avec Y = b_x X + b_m M + b_xm (X·M - μ)/σ, la pente de X quand M = m vaut
+    b_x + b_xm · m / σ (σ = 1 seulement si X et M sont non corrélés)."""
     pc = res.path_coefficients
     name = interaction_name(x, m) if interaction_name(x, m) in pc.index else interaction_name(m, x)
     if name not in pc.index:
         raise KeyError(f"Pas d'interaction entre {x} et {m}")
     bx, bm, bxm = pc.loc[x, target], pc.loc[m, target], pc.loc[name, target]
+    mu, sd = getattr(res, "interaction_scale", {}).get(name, (0.0, 1.0))
     rows = []
     for lvl in levels:
+        pred = lambda xv: bx * xv + bm * lvl + bxm * (xv * lvl - mu) / sd  # noqa: E731
         rows.append({
             f"{m} (ET)": lvl,
-            "pente": bx + bxm * lvl,
-            f"{target} si {x}=-1": -bx + bm * lvl - bxm * lvl,
-            f"{target} si {x}=+1": bx + bm * lvl + bxm * lvl,
+            "pente": bx + bxm * lvl / sd,
+            f"{target} si {x}=-1": pred(-1.0),
+            f"{target} si {x}=+1": pred(1.0),
         })
     return pd.DataFrame(rows).set_index(f"{m} (ET)")
 

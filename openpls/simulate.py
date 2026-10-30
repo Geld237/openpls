@@ -32,16 +32,16 @@ def simulate(n: int = 500, loading: float = 0.8, seed: int = 0, direct: float = 
 
 
 def simulate_moderation(n: int = 500, loading: float = 0.8, seed: int = 0,
-                        b_x: float = 0.4, b_m: float = 0.2, b_xm: float = 0.25) -> pd.DataFrame:
-    """Modèle vrai : Y = b_x·X + b_m·M + b_xm·X·M + erreur, X et M normales indépendantes
-    (donc X·M de variance 1 et les coefficients sont directement standardisés).
-    Indicateurs x_1..3, m_1..3, y_1..3."""
+                        b_x: float = 0.4, b_m: float = 0.2, b_xm: float = 0.25, rho: float = 0.0) -> pd.DataFrame:
+    """Modèle vrai : Y = b_x·X + b_m·M + b_xm·X·M + erreur, (X, M) normales standard de corrélation `rho`,
+    Var(Y) = 1. Var(X·M) = 1 + rho² : le coefficient du terme d'interaction STANDARDISÉ vaut
+    b_xm·√(1 + rho²). Indicateurs x_1..3, m_1..3, y_1..3."""
     rng = np.random.default_rng(seed)
-    x, m = rng.normal(size=(2, n))
-    explained = b_x**2 + b_m**2 + b_xm**2
+    x, m = rng.multivariate_normal([0, 0], [[1, rho], [rho, 1]], n).T
+    explained = b_x**2 + b_m**2 + 2 * b_x * b_m * rho + b_xm**2 * (1 + rho**2)
     if explained >= 1:
         raise ValueError("Variance expliquée > 1")
-    y = b_x * x + b_m * m + b_xm * x * m + rng.normal(0, np.sqrt(1 - explained), n)
+    y = b_x * x + b_m * m + b_xm * (x * m - rho) + rng.normal(0, np.sqrt(1 - explained), n)
     cols = {}
     for name, lv in {"x": x, "m": m, "y": y}.items():
         for k in range(1, 4):

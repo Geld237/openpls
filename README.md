@@ -140,15 +140,16 @@ Démo en ligne de commande : `python examples/demo.py` (ou `python examples/demo
 
 ## Validation
 
-`pytest` lance 99 tests, organisés en quatre familles. Ils couvrent 95 % du code de calcul.
+`pytest` lance 122 tests, organisés en quatre familles. Ils couvrent environ 95 % du code de calcul ; pour le vérifier : `coverage run --source=openpls -m pytest && coverage report --omit="openpls/app.py,openpls/gui.py"`.
 
 **Cœur PLS**
+- OpenPLS concorde, à 10⁻¹⁰ près, avec une **implémentation de référence indépendante** (`tests/reference_pls.py`, écrite lors de l'audit externe), pour les trois schémas de pondération, avec 0, 1 ou 2 blocs formatifs.
 - Les scores sont un **point fixe exact** des équations PLS.
 - L'atténuation correspond à la théorie.
 - **PLSc retrouve les vrais coefficients** et les vrais effets indirects d'un modèle simulé.
 
 **Résultats exacts**
-- **Modération :** avec un indicateur unique, l'approche en deux étapes reproduit la régression OLS avec terme produit, à 10⁻¹⁰ près.
+- **Modération :** avec un indicateur unique, l'approche en deux étapes reproduit la régression OLS avec terme produit, à 10⁻¹⁰ près, y compris les pentes simples quand X et M sont corrélés. En PLSc, elle retrouve les vrais coefficients grâce à la correction de Becker et al. (2018).
 - **PLSpredict :** dans un modèle à une seule régression, PLS et LM donnent la même erreur.
 - **NCA :** un exemple est calculé à la main, et un cas d = 0,5 est connu analytiquement.
 
@@ -164,8 +165,9 @@ Démo en ligne de commande : `python examples/demo.py` (ou `python examples/demo
 - Elle est pilotée de bout en bout, pour chaque analyse.
 
 Deux scripts comparent aussi OpenPLS à des logiciels indépendants. Ils demandent `pandas<3` et se lancent dans un environnement séparé.
-- `python tests/crosscheck_plspm.py` : comparaison avec [`plspm`](https://pypi.org/project/plspm/).
-- `python tests/crosscheck_semopy.py` : comparaison du CB-SEM avec [`semopy`](https://pypi.org/project/semopy/), modèles de premier et de second ordre. Le χ² est identique et les estimations concordent à 5·10⁻⁴ près.
+- `python tests/crosscheck_plspm.py` : comparaison avec [`plspm`](https://pypi.org/project/plspm/). L'écart d'environ 8·10⁻³ vient de plspm, qui s'arrête avant convergence ; la référence indépendante ci-dessus concorde, elle, à la précision machine.
+- `python tests/crosscheck_semopy.py` : comparaison du CB-SEM avec [`semopy`](https://pypi.org/project/semopy/), modèles de premier et de second ordre. Le χ² est identique et tous les paramètres libres concordent à 5·10⁻⁴ près.
+- `python tests/browser_check.py` : vérifie l'interface dans Chromium (éditeur glisser-déposer, ordre supérieur, changement et remplacement de fichiers), avec `openpls-gui` lancé.
 
 ## Confidentialité et limites connues
 
@@ -173,7 +175,13 @@ Deux scripts comparent aussi OpenPLS à des logiciels indépendants. Ils demande
 - Les valeurs manquantes sont supprimées par liste (une ligne incomplète est retirée).
 - PLSpredict et l'IPMA ne sont pas proposés pour les modèles avec interaction ou d'ordre supérieur.
 - MICOM n'est pas corrigé pour les tests multiples : avec beaucoup de construits et de groupes, un rejet isolé peut survenir par hasard.
-- Modération en deux étapes avec PLSc : la seconde étape utilise le PLS classique, car ses construits n'ont qu'un indicateur.
+- Modération avec PLSc : seule l'approche en deux étapes est corrigée (Becker et al. 2018) ; les approches par produit d'indicateurs sous-estiment alors l'interaction.
+- Bootstrap : les tirages en échec (fréquents en PLSc avec de petits échantillons) sont exclus, comptés et signalés ; au-delà de 5 % d'échecs, l'interface déclare l'inférence non fiable.
+- CB-SEM : un construit à indicateur unique a sa variance d'erreur fixée à 0 (comme `auto.fix.single` dans lavaan).
+
+## Audit
+
+La v0.4 a fait l'objet d'un audit externe indépendant (relecture adversariale du code et des formules, recoupements numériques). Ses 9 constats principaux ont été confirmés, corrigés et couverts par des tests de non-régression (`tests/test_audit.py`) : inférence bootstrap biaisée par l'exclusion silencieuse des tirages en échec, résultats périmés après remplacement d'un fichier, f² recalculé avec d'autres réglages, indicateurs dupliqués acceptés, PLSc ignoré en modération en deux étapes, pentes simples inexactes quand X et M sont corrélés, groupes MGA alignés par position, Fornell-Larcker incohérent en PLSc, construit CB-SEM à indicateur unique non identifié.
 
 ## Feuille de route
 

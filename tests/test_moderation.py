@@ -60,7 +60,8 @@ def test_simple_slopes_and_bootstrap():
     res = fit(d, m)
     ss = simple_slopes(res, "X", "M", "Y")
     b = res.path_coefficients["Y"]
-    assert ss.loc[1.0, "pente"] == pytest.approx(b["X"] + b["X:M"])
+    sd = res.interaction_scale["X:M"][1]
+    assert ss.loc[1.0, "pente"] == pytest.approx(b["X"] + b["X:M"] / sd)
     assert ss.loc[-1.0, "pente"] < ss.loc[1.0, "pente"]
     boot = bootstrap_statistics(d, m, simple_slope_statistics, n_boot=100, seed=0)
     assert boot.attrs["n_boot_failed"] == 0 and len(boot) == 3
@@ -81,3 +82,36 @@ def test_product_indicator_rejects_formative():
     with pytest.raises(ValueError, match="deux étapes"):
         fit(d, m, moderation="product_indicator")
     assert fit(d, m).converged  # le two-stage accepte le formatif
+
+
+def test_simple_slopes_exact_with_correlated_x_m():
+    """Constat d'audit : X et M corrélés. Sans erreur de mesure, les pentes simples doivent égaler
+    celles de la régression OLS avec le produit brut Z_X·Z_M."""
+    rng = np.random.default_rng(0)
+    n = 3000
+    x = rng.normal(size=n)
+    mo = 0.6 * x + 0.8 * rng.normal(size=n)
+    y = 0.3 * x + 0.2 * mo + 0.3 * x * mo + rng.normal(size=n)
+    d = pd.DataFrame({"x": x, "m": mo, "y": y})
+    res = fit(d, Model.from_syntax("X =~ x\nM =~ m\nY =~ y\nY ~ X + M + X:M"))
+    z = lambda v: (v - v.mean()) / v.std(ddof=1)  # noqa: E731
+    zx, zm, zy = z(x), z(mo), z(y)
+    b = np.linalg.lstsq(np.column_stack([np.ones(n), zx, zm, zx * zm]), zy, rcond=None)[0]
+    got = simple_slopes(res, "X", "M", "Y")["pente"].to_numpy()
+    np.testing.assert_allclose(got, [b[1] + b[3] * k for k in (-1, 0, 1)], atol=1e-10)
+
+
+@pytest.mark.parametrize("rho", [0.0, 0.5])
+def test_plsc_two_stage_is_consistent(rho):
+    """Constat d'audit : PLSc + deux étapes appliquait le PLS classique. Correction de Becker et al. (2018)."""
+    from openpls.simulate import simulate_moderation
+
+    d = simulate_moderation(n=20000, seed=1, rho=rho)
+    res = fit(d, Model.from_syntax(SYNTAX), consistent=True)
+    assert res.consistent
+    b = res.path_coefficients["Y"]
+    assert b["X"] == pytest.approx(0.4, abs=0.02)
+    assert b["M"] == pytest.approx(0.2, abs=0.02)
+    assert b["X:M"] == pytest.approx(0.25 * np.sqrt(1 + rho**2), abs=0.02)
+    slopes = simple_slopes(res, "X", "M", "Y")["pente"].to_numpy()
+    np.testing.assert_allclose(slopes, [0.15, 0.4, 0.65], atol=0.03)

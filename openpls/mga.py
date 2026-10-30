@@ -20,12 +20,14 @@ MICOM (Henseler, Ringle & Sarstedt 2016) — à vérifier AVANT de comparer des 
 """
 from __future__ import annotations
 
+import warnings
 from typing import Callable
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .algorithm import ConvergenceWarning
 from .model import Model
 
 
@@ -38,8 +40,24 @@ def _paths(res) -> pd.Series:
                      index=[f"{s} -> {d}" for s, d in m.structural])
 
 
+def _align_groups(data: pd.DataFrame, groups) -> pd.Series:
+    """Série de groupes alignée sur data : par étiquette d'index si `groups` est une Series,
+    par position sinon (liste, tableau)."""
+    if isinstance(groups, pd.Series):
+        if not groups.index.is_unique:
+            raise ValueError("L'index de la variable de groupe contient des doublons")
+        g = groups.reindex(data.index)
+        if g.isna().any() and not groups.isna().any():
+            raise ValueError("La variable de groupe ne couvre pas toutes les lignes des données (index différents)")
+        return g
+    g = np.asarray(groups)
+    if len(g) != len(data):
+        raise ValueError(f"La variable de groupe a {len(g)} valeurs pour {len(data)} lignes")
+    return pd.Series(g, index=data.index)
+
+
 def _split(data: pd.DataFrame, groups) -> tuple[pd.Series, list]:
-    g = pd.Series(np.asarray(groups), index=data.index)
+    g = _align_groups(data, groups)
     if g.isna().any():
         raise ValueError("La variable de groupe contient des valeurs manquantes")
     levels = list(pd.unique(g))
@@ -68,8 +86,9 @@ def mga(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: in
         seed: int | None = 42, statistic: Callable = _paths, progress=None, **fit_kwargs) -> dict:
     """Analyse multigroupe complète, MICOM inclus.
 
-    Retourne un dict : "groups" (étiquettes et effectifs), "estimates" (par groupe),
-    "comparison" (différences et p-values des 3 tests), "micom_step2", "micom_step3"."""
+    Retourne un dict : "groups" (effectifs), "comparison" (estimations par groupe, différences et
+    p-values des 3 tests), "micom_step2", "micom_step3", "verdict", "invariant",
+    "n_perm_ok", "n_perm_failed"."""
     from .algorithm import fit
     from .bootstrap import bootstrap_statistics
 
@@ -106,7 +125,9 @@ def mga(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: in
     for b in range(n_perm):
         msk = rng.permutation(mask)
         try:
-            p1, p2 = fit(data[msk], model, **fit_kwargs), fit(data[~msk], model, **fit_kwargs)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ConvergenceWarning)
+                p1, p2 = fit(data[msk], model, **fit_kwargs), fit(data[~msk], model, **fit_kwargs)
         except (ValueError, np.linalg.LinAlgError):
             fails += 1
             continue
@@ -129,7 +150,7 @@ def mga(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: in
     def prog_offset(off):
         return (lambda i, n: progress(n_perm + off + i, n_perm + 2 * n_boot)) if progress else None
 
-    draws = []
+    draws, boot_msgs = [], []
     for k, dk in enumerate((d1, d2)):
         collected = []
 
@@ -137,9 +158,12 @@ def mga(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: in
             s = statistic(res)
             collected.append(s.reindex(diff.index).to_numpy())
             return s
-        bootstrap_statistics(dk.reset_index(drop=True), model, keep, n_boot=n_boot,
-                             seed=None if seed is None else seed + 1 + k, progress=prog_offset(k * n_boot),
-                             **fit_kwargs)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            bt = bootstrap_statistics(dk.reset_index(drop=True), model, keep, n_boot=n_boot,
+                                      seed=None if seed is None else seed + 1 + k,
+                                      progress=prog_offset(k * n_boot), **fit_kwargs)
+        boot_msgs += [f"groupe {levels[k]} : {m}" for m in bt.attrs["warnings"]]
         draws.append(np.array(collected[1:]))  # le 1er appel = estimation sur l'échantillon complet
     b1, b2 = draws
     # Henseler (2009) : p unilatérale de H1 « beta1 > beta2 » = 1 - sum Θ(2·mean1 - b1_j - 2·mean2 + b2_i) / B²
@@ -199,7 +223,11 @@ def mga(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: in
         bad = ", ".join(step2.index[~step2["invariance compositionnelle"]])
         verdict = f"pas d'invariance compositionnelle pour {bad} : interpréter la MGA avec prudence"
 
+    msgs = list(boot_msgs)
+    if fails:
+        msgs.insert(0, f"{fails}/{n_perm} permutations en échec exclues")
     return {
+        "warnings": msgs,
         "invariant": bool(step2["invariance compositionnelle"].all()),
         "groups": pd.Series({lbl1: n1, lbl2: n2}, name="n"),
         "comparison": comparison,
@@ -239,7 +267,7 @@ def mga_multi(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_bo
 
     from .algorithm import fit
 
-    g = pd.Series(np.asarray(groups), index=data.index)
+    g = _align_groups(data, groups)
     if g.isna().any():
         raise ValueError("La variable de groupe contient des valeurs manquantes")
     levels = list(pd.unique(g))
@@ -276,7 +304,9 @@ def mga_multi(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_bo
     perm, fails = [], 0
     for _ in range(n_perm):
         try:
-            perm.append(omni(group_stats(rng.permutation(labels)).reindex(est.index)))
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ConvergenceWarning)
+                perm.append(omni(group_stats(rng.permutation(labels)).reindex(est.index)))
         except (ValueError, np.linalg.LinAlgError):
             fails += 1
         tick()
@@ -287,7 +317,7 @@ def mga_multi(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_bo
     omnibus = pd.DataFrame({"statistique": obs, "p_value": p_omni}, index=est.index)
     omnibus["différence entre groupes (p<0,05)"] = omnibus["p_value"] < 0.05
 
-    rows, micom = [], {}
+    rows, micom, pair_msgs = [], {}, []
     for k, (a, b) in enumerate(pairs):
         mask = np.isin(labels, [a, b])
         base = done[0]
@@ -300,6 +330,7 @@ def mga_multi(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_bo
         name = f"{a} vs {b}"
         micom[name] = {"step2": out["micom_step2"], "step3": out["micom_step3"], "verdict": out["verdict"],
                        "invariant": out["invariant"]}
+        pair_msgs += [f"{name} — {m}" for m in out["warnings"]]
         c = out["comparison"]
         for path, r in c.iterrows():
             rows.append({"paire": name, "chemin": path, "difference": r["difference"],
@@ -312,7 +343,9 @@ def mga_multi(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_bo
     invariant = all(v["invariant"] for v in micom.values())
     verdict = ("invariance au moins partielle pour toutes les paires : la comparaison est légitime" if invariant
                else "invariance compositionnelle non établie pour au moins une paire : interpréter avec prudence")
+    msgs = ([f"omnibus : {fails}/{n_perm} permutations en échec exclues"] if fails else []) + pair_msgs
     return {
+        "warnings": msgs,
         "invariant": invariant,
         "groups": pd.Series({str(lv): int(n) for lv, n in zip(levels, sizes)}, name="n"),
         "estimates": est, "omnibus": omnibus, "pairwise": pw, "micom": micom, "verdict": verdict,

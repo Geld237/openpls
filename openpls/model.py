@@ -26,6 +26,15 @@ class Model:
     def __post_init__(self) -> None:
         self.latents: list[str] = list(self.measurement) + [h for h in self.higher_order if h not in self.measurement]
         idx = {lv: i for i, lv in enumerate(self.latents)}
+        seen: dict[str, str] = {}
+        for lv, inds in self.measurement.items():
+            for ind in inds:
+                if ind in seen:
+                    where = "deux fois dans " + lv if seen[ind] == lv else f"dans {seen[ind]} et dans {lv}"
+                    raise ValueError(f"L'indicateur {ind} apparaît {where} : un indicateur ne peut mesurer "
+                                     "qu'un seul construit (pour un construit d'ordre supérieur, utilise "
+                                     "la syntaxe HOC =~ LV1 + LV2)")
+                seen[ind] = lv
         owner: dict[str, str] = {}
         for hoc, locs in self.higher_order.items():
             if hoc in self.measurement:

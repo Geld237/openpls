@@ -1,14 +1,31 @@
 """Bootstrap pour l'inférence (erreurs-types, t, p-values, IC percentiles)."""
 from __future__ import annotations
 
+import warnings
 from typing import Callable
 
 import numpy as np
 import pandas as pd
 from scipy import stats
 
-from .algorithm import fit
+from .algorithm import ConvergenceWarning, fit
 from .model import Model
+
+
+class BootstrapWarning(UserWarning):
+    """Tirages bootstrap en échec, non convergés ou inadmissibles : l'inférence peut être biaisée."""
+
+
+FAILURE_ALERT = 0.05  # au-delà de 5 % de tirages en échec, l'inférence n'est pas fiable
+
+
+def _diagnose(res) -> tuple[bool, bool]:
+    """(non convergé, inadmissible) pour un tirage : |chemin| > 1 ou |chargement| > 1 (PLSc)."""
+    meas = res.measurement_result
+    nonconv = not (res.converged and meas.converged)
+    inadm = bool((res.path_coefficients.abs().to_numpy() > 1 + 1e-9).any()
+                 or (meas.outer_loadings.abs().to_numpy() > 1 + 1e-9).any())
+    return nonconv, inadm
 
 
 def bootstrap_statistics(
@@ -25,11 +42,17 @@ def bootstrap_statistics(
     rng = np.random.default_rng(seed)
     est = statistic(fit(data, model, **fit_kwargs))
     n = len(data)
-    draws, failures = [], 0
+    draws, failures, nonconv, inadm = [], 0, 0, 0
     for b in range(n_boot):
         sample = data.iloc[rng.integers(0, n, n)].reset_index(drop=True)
         try:
-            draws.append(statistic(fit(sample, model, **fit_kwargs)).reindex(est.index).to_numpy())
+            with warnings.catch_warnings():  # non-convergence comptée ci-dessous
+                warnings.simplefilter("ignore", ConvergenceWarning)
+                r = fit(sample, model, **fit_kwargs)
+            draws.append(statistic(r).reindex(est.index).to_numpy())
+            nc, ia = _diagnose(r)
+            nonconv += nc
+            inadm += ia
         except (ValueError, np.linalg.LinAlgError):
             failures += 1
         if progress:
@@ -58,6 +81,22 @@ def bootstrap_statistics(
     )
     out.attrs["n_boot_ok"] = len(draws)
     out.attrs["n_boot_failed"] = failures
+    out.attrs["n_boot_nonconverged"] = nonconv
+    out.attrs["n_boot_inadmissible"] = inadm
+    out.attrs["failure_rate"] = failures / n_boot
+    msgs = []
+    if failures:
+        msgs.append(f"{failures}/{n_boot} tirages en échec ont été exclus : les tirages restants ne sont pas "
+                    "représentatifs, erreurs-types et intervalles peuvent être biaisés"
+                    + (" (inférence NON fiable)" if failures / n_boot > FAILURE_ALERT else ""))
+    if nonconv:
+        msgs.append(f"{nonconv}/{n_boot} tirages n'ont pas convergé")
+    if inadm:
+        msgs.append(f"{inadm}/{n_boot} tirages ont un coefficient ou un chargement > 1 en valeur absolue "
+                    "(solution inadmissible, fréquent en PLSc avec de petits échantillons)")
+    out.attrs["warnings"] = msgs
+    for m in msgs:
+        warnings.warn(m, BootstrapWarning, stacklevel=2)
     return out
 
 

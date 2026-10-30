@@ -7,7 +7,8 @@ Modèle (notation LISREL « tout-y ») :
 Fonction d'ajustement : F_ML = log|Σ| + tr(S Σ⁻¹) - log|S| - p, avec S la matrice de covariance
 (diviseur N, comme lavaan). Identification par variable marqueur (1er chargement fixé à 1).
 Ψ : variances et covariances libres entre latentes exogènes ; variances résiduelles des
-endogènes. Les construits doivent être réflectifs. Second ordre : HOC -> composantes dans B,
+endogènes. Les construits doivent être réflectifs. Un construit à indicateur unique a la variance
+d'erreur de cet indicateur fixée à 0 (le construit est l'indicateur), comme `auto.fix.single` de lavaan. Second ordre : HOC -> composantes dans B,
 première relation fixée à 1 ; la CFA de second ordre s'obtient avec cfa=True.
 
 Indices : χ² = N·F, ddl, CFI, TLI, RMSEA (+ IC 90 %), SRMR, AIC, BIC.
@@ -80,8 +81,12 @@ class _Spec:
         for j in range(k):
             if j not in exo:
                 params.append(("P", j, j, f"{self.lvs[j]} ~~ {self.lvs[j]} (résiduelle)"))
+        # indicateur unique : variance d'erreur fixée à 0 (sinon non identifiée ; comme lavaan, auto.fix.single)
+        single = {model.measurement[lv][0] for lv in model.measurement if len(model.measurement[lv]) == 1}
+        self.single = single
         for i, ind in enumerate(self.inds):
-            params.append(("T", i, i, f"{ind} ~~ {ind}"))
+            if ind not in single:
+                params.append(("T", i, i, f"{ind} ~~ {ind}"))
         self.params = params
         self.lam0 = np.zeros((p, k))
         for j, lv in enumerate(self.lvs):

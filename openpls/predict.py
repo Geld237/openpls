@@ -1,5 +1,8 @@
 """Évaluation de la capacité prédictive hors échantillon.
 
+Convention : les erreurs (RMSE, MAE, Q²_predict) sont calculées pour chaque répétition puis
+moyennées ; seminr moyenne plutôt les prédictions avant de calculer l'erreur (écart < 0,5 % observé).
+
 PLSpredict (Shmueli et al. 2016, 2019) : validation croisée à k plis répétée.
 Sur chaque pli, le modèle est estimé sur les données d'apprentissage ; pour les
 observations mises de côté, on calcule les scores des latentes exogènes avec les poids
@@ -30,7 +33,13 @@ def _fold_predictions(train: pd.DataFrame, test: pd.DataFrame, model: Model, app
     from .algorithm import fit
     from .effects import total_effects
 
-    res = fit(train, model, **fit_kwargs)
+    import warnings
+
+    from .algorithm import ConvergenceWarning
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ConvergenceWarning)
+        res = fit(train, model, **fit_kwargs)
     lvs = model.latents
     exo = _exogenous(model)
     endo = model.endogenous()

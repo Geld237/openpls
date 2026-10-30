@@ -122,8 +122,12 @@ if source == "Importer un fichier":
         st.info("Importe un fichier CSV ou Excel (une colonne par indicateur, une ligne par répondant) "
                 "dans la barre latérale, ou choisis les données d'exemple.")
         st.stop()
-    raw = read_file(up.getvalue(), up.name)
-    data_id = f"file:{up.name}:{len(raw)}"
+    content = up.getvalue()
+    raw = read_file(content, up.name)
+    # identifié par son contenu : un fichier corrigé de même nom et même taille réinitialise les résultats
+    import hashlib
+
+    data_id = f"file:{up.name}:{hashlib.sha256(content).hexdigest()[:16]}"
 elif source == "Exemple de second ordre":
     raw = simulate_higher_order(400, seed=21)
     data_id = "example_hoc"
@@ -155,10 +159,21 @@ st.title("Modèle")
 raw = raw.rename(columns=str)  # en-têtes numériques (fréquents dans Excel) -> texte, comme dans la syntaxe
 numeric_cols = [c for c in raw.columns if pd.api.types.is_numeric_dtype(raw[c])]
 if st.session_state.get("data_id") != data_id:
+    prev_id, prev_cols = st.session_state.get("data_id"), st.session_state.get("data_cols")
     st.session_state["data_id"] = data_id
-    st.session_state["syntax"] = {"example": EXAMPLE_SYNTAX, "example_hoc": HOC_SYNTAX}.get(
-        data_id, guess_syntax(numeric_cols) if data_id.startswith("file:") else EXAMPLE_SYNTAX)
-    for k in ("results", "boot", "adv", "editor_pos"):
+    st.session_state["data_cols"] = list(raw.columns)
+    # nouvelle version d'un fichier aux mêmes colonnes (données corrigées) : on garde le modèle saisi,
+    # mais tous les résultats sont effacés ; sinon, modèle par défaut
+    same_layout = (prev_id or "").startswith("file:") and data_id.startswith("file:") and prev_cols == list(raw.columns)
+    if same_layout and st.session_state.get("syntax_saved"):
+        st.session_state["syntax"] = st.session_state["syntax_saved"]
+    else:
+        st.session_state["syntax"] = {"example": EXAMPLE_SYNTAX, "example_hoc": HOC_SYNTAX}.get(
+            data_id, guess_syntax(numeric_cols) if data_id.startswith("file:") else EXAMPLE_SYNTAX)
+        st.session_state.pop("editor_pos", None)
+elif "syntax" not in st.session_state:  # état du widget perdu (passage sans zone de texte)
+    st.session_state["syntax"] = st.session_state.get("syntax_saved", EXAMPLE_SYNTAX)
+    for k in ("results", "boot", "adv", "boot_table"):
         st.session_state.pop(k, None)
 
 with st.expander(f"Aperçu des données — {raw.shape[0]} lignes × {raw.shape[1]} colonnes"):
@@ -189,6 +204,7 @@ with tab_syntax:
                           "`HOC =~ LV1 + LV2` (ordre supérieur : les termes sont des variables latentes). "
                           "`#` pour les commentaires.")
 
+st.session_state["syntax_saved"] = st.session_state["syntax"]  # copie hors widget (survit aux passages sans lui)
 try:
     model = Model.from_syntax(st.session_state["syntax"])
     data, warns = prepare_data(raw, model)
@@ -215,14 +231,14 @@ res = None
 if run and ok:
     try:
         res = fit(data, model, **fit_kwargs)
-        st.session_state["results"] = (st.session_state["syntax"], fit_kwargs, res, data)
+        st.session_state["results"] = (st.session_state["syntax"], fit_kwargs, res, data, data_id)
         st.session_state.pop("boot", None)
     except Exception as e:  # noqa: BLE001 - message lisible pour l'utilisateur
         st.error(f"Échec de l'estimation : {e}")
 
 prev = st.session_state.get("results")
-if prev and prev[0] == st.session_state["syntax"] and prev[1] == fit_kwargs:
-    _, _, res, data = prev
+if prev and prev[0] == st.session_state["syntax"] and prev[1] == fit_kwargs and prev[4] == data_id:
+    _, _, res, data, _ = prev
 
 with right:
     if model is not None:
@@ -237,6 +253,9 @@ if res is None:
 st.title("Résultats")
 conv_res = res.measurement_result  # en deux étapes : l'itératif PLS est celui de l'étape 1
 status = "convergé" if res.converged and conv_res.converged else "NON convergé"
+if res.moderation in ("product_indicator", "orthogonal") and fit_kwargs.get("consistent"):
+    st.warning("Avec PLSc, seule la modération en deux étapes est corrigée de l'atténuation (Becker et al. 2018) ; "
+               "les approches par produit d'indicateurs sous-estiment l'effet d'interaction.")
 mod_txt = (f" · modération : {res.moderation}" if res.moderation else "") + (
     f" · ordre supérieur : {res.hoc_method}" if res.hoc_method else "")
 st.caption(f"{'PLSc' if res.consistent else 'PLS'} · schéma {scheme} · {status} en {conv_res.iterations} itérations · "
@@ -366,19 +385,32 @@ with tabs[3]:
     if st.button("▶  Lancer le bootstrap", key="run_boot"):
         bar = st.progress(0.0, text="Bootstrap…")
         try:
-            boot = bootstrap_statistics(
-                data, model, boot_stats, n_boot=int(n_boot), seed=seed, alpha=alpha,
-                progress=lambda i, n: bar.progress(i / n, text=f"Bootstrap {i}/{n}") if i % 25 == 0 or i == n else None,
-                **fit_kwargs,
-            )
-            st.session_state["boot"] = (st.session_state["syntax"], fit_kwargs, int(n_boot), alpha, seed, boot)
+            import warnings as _w
+
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                boot = bootstrap_statistics(
+                    data, model, boot_stats, n_boot=int(n_boot), seed=seed, alpha=alpha,
+                    progress=lambda i, n: bar.progress(i / n, text=f"Bootstrap {i}/{n}")
+                    if i % 25 == 0 or i == n else None,
+                    **fit_kwargs,
+                )
+            st.session_state["boot"] = (st.session_state["syntax"], fit_kwargs, int(n_boot), alpha, seed, boot,
+                                        data_id)
         except Exception as e:  # noqa: BLE001
             st.error(f"Échec du bootstrap : {e}")
         bar.empty()
 
     b = st.session_state.get("boot")
-    if b and b[:5] == (st.session_state["syntax"], fit_kwargs, int(n_boot), alpha, seed):
+    if b and b[:5] == (st.session_state["syntax"], fit_kwargs, int(n_boot), alpha, seed) and b[6] == data_id:
         boot = b[5]
+        if boot.attrs.get("failure_rate", 0) > 0.05:
+            st.error("Inférence NON fiable — " + " · ".join(boot.attrs["warnings"]) +
+                     ". Essaie le PLS classique (au lieu de PLSc), un échantillon plus grand ou un modèle de mesure "
+                     "plus fiable.")
+        elif boot.attrs.get("warnings"):
+            st.warning(" · ".join(boot.attrs["warnings"]))
+        st.caption(f"{boot.attrs.get('n_boot_ok', len(boot))} tirages utilisés.")
         lo, hi = boot.columns[-2], boot.columns[-1]
         sig = (boot[lo] > 0) | (boot[hi] < 0)
         boot_view = boot.assign(significatif=sig.map({True: "oui", False: "non"}))
@@ -422,7 +454,7 @@ with tabs[3]:
 # ---------------------------------------------------------------- analyses avancées
 ADV = ["Prédiction (PLSpredict, CVPAT)", "Multigroupe (MGA, MICOM)", "Importance-performance (IPMA)",
        "Conditions nécessaires (NCA)", "Endogénéité (copules)", "CB-SEM / CFA", "Segmentation (FIMIX-PLS)"]
-base_key = (st.session_state["syntax"], tuple(sorted(fit_kwargs.items())), seed, len(data))
+base_key = (data_id, st.session_state["syntax"], tuple(sorted(fit_kwargs.items())), seed, len(data))
 plain = not model.interactions and not model.higher_order
 plain_why = "avec interaction" if model.interactions else "d'ordre supérieur"
 
@@ -513,6 +545,8 @@ with tabs[4]:
             out = stored("mga", key)
             if out:
                 st.write("Effectifs : " + " · ".join(f"**{g}** n = {n}" for g, n in out["groups"].items()))
+                for msg in out.get("warnings", []):
+                    st.warning(msg)
                 st.subheader("MICOM — invariance de mesure")
                 if out["invariant"]:
                     st.success(out["verdict"].capitalize())

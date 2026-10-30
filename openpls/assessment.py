@@ -30,14 +30,23 @@ def quality_criteria(res) -> pd.DataFrame:
         s = lam.sum() ** 2
         rho_c = s / (s + (1 - lam**2).sum())
         ave = (lam**2).mean()
-        rows[lv] = {"cronbach_alpha": alpha, "rho_A": res.rho_a[lv], "rho_c": rho_c, "AVE": ave}
+        if res.model.modes[lv] == "B":  # critères de fiabilité sans objet pour un bloc formatif
+            alpha = rho_c = ave = np.nan
+            rho_a_lv = np.nan
+        else:
+            rho_a_lv = res.rho_a[lv]
+        rows[lv] = {"cronbach_alpha": alpha, "rho_A": rho_a_lv, "rho_c": rho_c, "AVE": ave}
     return pd.DataFrame(rows).T
 
 
 def fornell_larcker(res) -> pd.DataFrame:
     """Diagonale = racine de l'AVE, hors diagonale = corrélations entre latentes."""
     lvs = _measured(res)
-    corr = res.scores[lvs].corr()
+    # en PLSc, l'AVE vient des chargements corrigés : on la compare aux corrélations corrigées
+    if res.consistent and res.latent_correlations is not None:
+        corr = res.latent_correlations.loc[lvs, lvs].copy()
+    else:
+        corr = res.scores[lvs].corr()
     ave = quality_criteria(res)["AVE"]
     out = corr.copy()
     for lv in out.index:
@@ -74,9 +83,12 @@ def f_squared(res, data, **fit_kwargs) -> pd.DataFrame:
     from .higher_order import structural_view
 
     spec = res.spec or res.model
-    for attr, kw in (("moderation", "moderation"), ("hoc_method", "hoc_method")):
-        if getattr(res, attr, None) and kw not in fit_kwargs:
-            fit_kwargs = {**fit_kwargs, kw: getattr(res, attr)}
+    # les modèles réduits sont estimés avec les mêmes réglages que `res`
+    inherited = {"consistent": res.consistent, "scheme": res.scheme}
+    for attr in ("moderation", "hoc_method"):
+        if getattr(res, attr, None):
+            inherited[attr] = getattr(res, attr)
+    fit_kwargs = {**inherited, **fit_kwargs}
     view = structural_view(res)
     rows = []
     for src, dst in view.model.structural:
