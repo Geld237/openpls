@@ -4,7 +4,7 @@ Implémentation **libre et open source** du PLS-SEM (*Partial Least Squares Stru
 
 Le code est une **réimplémentation indépendante, écrite à partir de la littérature scientifique publiée**. Il ne contient aucun code, fichier ni ressource d'un logiciel propriétaire.
 
-## Fonctionnalités (v0.4)
+## Fonctionnalités (v0.5)
 
 | | |
 |---|---|
@@ -25,6 +25,7 @@ Le code est une **réimplémentation indépendante, écrite à partir de la litt
 | Endogénéité | Copules gaussiennes (toutes combinaisons), contrôle de non-normalité |
 | CB-SEM / CFA | Maximum de vraisemblance, y compris second ordre ; χ², CFI, TLI, RMSEA (+ IC 90 %), SRMR, AIC, BIC |
 | Segmentation | FIMIX-PLS, critères AIC3/AIC4/BIC/CAIC/EN |
+| Application | Fenêtre native sous Windows et macOS, sans terminal ni navigateur ; installateurs fournis |
 | Interface graphique | Éditeur de modèle par glisser-déposer, diagramme en direct, toutes les analyses ci-dessus, tableaux colorés selon les seuils, export Excel |
 
 [![Tests](https://github.com/Geld237/openpls/actions/workflows/tests.yml/badge.svg)](https://github.com/Geld237/openpls/actions/workflows/tests.yml)
@@ -33,18 +34,20 @@ Le code est une **réimplémentation indépendante, écrite à partir de la litt
 
 Télécharge le fichier qui correspond à ton ordinateur sur la page [**Releases**](https://github.com/Geld237/openpls/releases/latest) :
 
-| Système | Fichier | Lancement |
+| Système | Fichier | Installation |
 |---|---|---|
 | Windows 10/11 | `OpenPLS-…-Windows-installateur.exe` | double-clic, suis l'assistant ; OpenPLS apparaît dans le menu Démarrer |
-| Mac M1, M2, M3… | `OpenPLS-…-macOS-AppleSilicon.zip` | décompresse, puis double-clic sur `OpenPLS` |
+| Mac M1, M2, M3… | `OpenPLS-…-macOS-AppleSilicon.zip` | double-clic pour décompresser, puis glisse OpenPLS dans Applications |
 | Mac Intel | `OpenPLS-…-macOS-Intel.zip` | idem |
-| Linux | `OpenPLS-…-Linux.tar.gz` | décompresse, puis `./OpenPLS` |
+| Linux | `OpenPLS-…-Linux.tar.gz` | décompresse, puis lance `OpenPLS` (s'ouvre dans le navigateur) |
 
-OpenPLS s'ouvre dans ton navigateur, mais **tout reste sur ton ordinateur** : tes données ne sont envoyées nulle part. Pour quitter, ferme la petite fenêtre de terminal qui s'est ouverte.
+Sous Windows et macOS, OpenPLS est une application normale : elle s'ouvre dans sa propre fenêtre, sans terminal ni navigateur, et se ferme comme n'importe quelle application. Les exports (Excel, CSV, syntaxe) sont enregistrés dans le dossier `Documents/OpenPLS`. **Tout reste sur ton ordinateur** : tes données ne sont envoyées nulle part.
 
-L'application n'est pas encore signée numériquement, donc au premier lancement :
+L'application n'est pas encore signée par Microsoft ou Apple, donc au premier lancement :
 - **Windows** : si « Windows a protégé votre ordinateur » s'affiche, clique « Informations complémentaires » puis « Exécuter quand même ».
-- **macOS** : clic droit sur `OpenPLS` → « Ouvrir » → « Ouvrir ». Ensuite, un double-clic suffit.
+- **macOS** : si macOS refuse d'ouvrir OpenPLS, va dans Réglages Système → Confidentialité et sécurité, puis clique « Ouvrir quand même » en bas de la page.
+
+En cas de problème, les journaux se trouvent dans le dossier `.openpls` de ton dossier personnel.
 
 ## Installation avec Python (développeurs)
 

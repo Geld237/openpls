@@ -20,6 +20,8 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 LicenseFile=..\LICENSE
+SetupIconFile=icon.ico
+UninstallDisplayIcon={app}\OpenPLS.exe
 
 [Languages]
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"

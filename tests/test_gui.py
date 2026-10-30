@@ -177,3 +177,21 @@ def test_app_higher_order_example():
     assert "Chargements de second ordre" in [s.value for s in at.subheader]
     at.radio(key="adv_choice").set_value("Prédiction (PLSpredict, CVPAT)").run()
     assert any("ordre supérieur" in w.value for w in at.warning)
+
+
+def test_desktop_mode_saves_exports_to_documents(tmp_path, monkeypatch):
+    """Application de bureau : les exports sont enregistrés dans Documents/OpenPLS."""
+    monkeypatch.setenv("OPENPLS_DESKTOP", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    (tmp_path / "Documents").mkdir()
+    at = _app().run()
+    _btn(at, "Estimer").click().run()
+    assert any(b.label == "Quitter OpenPLS" for b in at.sidebar.button)
+    _btn(at, "Résultats (Excel)").click().run()
+    assert not at.exception, at.exception
+    files = list((tmp_path / "Documents" / "OpenPLS").glob("openpls_resultats_*.xlsx"))
+    assert len(files) == 1
+    sheets = pd.read_excel(files[0], sheet_name=None)
+    assert "Chemins" in sheets and "Qualite" in sheets
+    assert any("Enregistré" in s.value for s in at.sidebar.success)

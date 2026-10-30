@@ -1,0 +1,10 @@
+OpenPLS démarre dans votre navigateur (http://localhost:8501)…
+Si la page ne s'ouvre pas, copiez cette adresse dans votre navigateur.
+Fermez cette fenêtre pour quitter OpenPLS.
+2026-10-30 18:42:27.359 Uvicorn server started on localhost:8501
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://localhost:8501
+
+  Stopping...

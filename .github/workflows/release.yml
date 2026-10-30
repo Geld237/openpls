@@ -24,6 +24,7 @@ jobs:
     needs: tests
     name: Application ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -59,24 +60,53 @@ jobs:
       - name: Dépendances
         id: deps
         shell: bash
-        run: python -m pip install ".[gui]" pyinstaller > deps.log 2>&1 || { bash "$RUNNER_TEMP/report.sh" dependances deps.log; exit 1; }
+        run: python -m pip install ".[gui,desktop]" pyinstaller > deps.log 2>&1 || { bash "$RUNNER_TEMP/report.sh" dependances deps.log; exit 1; }
       - name: Construction (PyInstaller)
         id: build
         shell: bash
         run: python packaging/build.py > build.log 2>&1 || { bash "$RUNNER_TEMP/report.sh" pyinstaller build.log; exit 1; }
-      - name: Vérification de l'exécutable (démarrage du serveur)
+      - name: Chemin de l'exécutable
+        id: exe
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) echo "path=dist/OpenPLS/OpenPLS.exe" >> "$GITHUB_OUTPUT" ;;
+            macOS)   echo "path=dist/OpenPLS.app/Contents/MacOS/OpenPLS" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "path=dist/OpenPLS/OpenPLS" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Vérification du serveur intégré
         id: launch
         shell: bash
         run: |
-          EXE=dist/OpenPLS/OpenPLS; [ -f dist/OpenPLS/OpenPLS.exe ] && EXE=dist/OpenPLS/OpenPLS.exe
-          "$EXE" --no-browser > launch.log 2>&1 &
+          "${{ steps.exe.outputs.path }}" --serve 8765 > launch.log 2>&1 &
           for i in $(seq 1 90); do
-            URL=$(grep -o "http://localhost:[0-9]*" launch.log 2>/dev/null | head -1 || true)
-            if [ -n "$URL" ] && curl -sf "$URL/_stcore/health" > /dev/null; then echo "serveur OK ($URL)"; break; fi
+            if curl -sf http://localhost:8765/_stcore/health > /dev/null; then echo "serveur OK"; break; fi
             sleep 2
           done
-          curl -sf "$URL/_stcore/health" || { bash "$RUNNER_TEMP/report.sh" demarrage launch.log; exit 1; }
-          if grep -qi traceback launch.log; then bash "$RUNNER_TEMP/report.sh" traceback launch.log; exit 1; fi
+          cp ~/.openpls/serveur.log serveur.log 2>/dev/null || true
+          curl -sf http://localhost:8765/_stcore/health || { bash "$RUNNER_TEMP/report.sh" serveur serveur.log; exit 1; }
+          if grep -qi traceback serveur.log; then bash "$RUNNER_TEMP/report.sh" traceback serveur.log; exit 1; fi
+      - name: Autotest de la fenêtre (Windows)
+        id: selftest_win
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath (Resolve-Path "${{ steps.exe.outputs.path }}") -ArgumentList "--selftest" -Wait -PassThru
+          $res = Get-Content "$HOME\.openpls\selftest.json" -ErrorAction SilentlyContinue
+          "code=$($p.ExitCode) resultat=$res" | Tee-Object selftest.log
+          Get-Content "$HOME\.openpls\openpls.log" -ErrorAction SilentlyContinue | Add-Content selftest.log
+          if ($p.ExitCode -ne 0) { bash "$env:RUNNER_TEMP/report.sh" fenetre selftest.log; exit 1 }
+          echo "::notice title=Fenetre Windows::$res"
+      - name: Autotest de la fenêtre (macOS)
+        id: selftest_mac
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set +e
+          "${{ steps.exe.outputs.path }}" --selftest; code=$?   # délais internes : 120 s serveur + 90 s page
+          { echo "code=$code resultat=$(cat ~/.openpls/selftest.json 2>/dev/null)"; cat ~/.openpls/openpls.log 2>/dev/null; } > selftest.log
+          [ "$code" = 0 ] || { bash "$RUNNER_TEMP/report.sh" fenetre selftest.log; exit 1; }
+          echo "::notice title=Fenetre macOS::$(cat ~/.openpls/selftest.json)"
       - name: Version
         id: v
         shell: bash
@@ -95,16 +125,20 @@ jobs:
         run: |
           cd dist
           NAME=OpenPLS-${{ steps.v.outputs.version }}-${{ matrix.label }}
-          cp ../packaging/LISEZMOI.txt OpenPLS/
-          if [ "$RUNNER_OS" = "macOS" ]; then ditto -c -k --keepParent OpenPLS "$NAME.zip"; else tar czf "$NAME.tar.gz" OpenPLS; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            ditto -c -k --keepParent OpenPLS.app "$NAME.zip"
+          else
+            cp ../packaging/LISEZMOI.txt OpenPLS/
+            tar czf "$NAME.tar.gz" OpenPLS
+          fi
       - name: Diagnostic en cas d'échec
         if: failure()
         shell: bash
         run: |
-          echo "deps=${{ steps.deps.outcome }} build=${{ steps.build.outcome }} launch=${{ steps.launch.outcome }} inno=${{ steps.inno.outcome }} archive=${{ steps.archive.outcome }}" > outcomes.log
+          echo "deps=${{ steps.deps.outcome }} build=${{ steps.build.outcome }} launch=${{ steps.launch.outcome }} fenetre=${{ steps.selftest_win.outcome }}${{ steps.selftest_mac.outcome }} inno=${{ steps.inno.outcome }} archive=${{ steps.archive.outcome }}" > outcomes.log
           ls -la dist dist/OpenPLS 2>&1 | head -40 >> outcomes.log || true
           bash "$RUNNER_TEMP/report.sh" etapes outcomes.log || true
-          for f in launch.log build.log inno.log; do [ -f "$f" ] && bash "$RUNNER_TEMP/report.sh" "$f" "$f"; done; true
+          for f in serveur.log selftest.log build.log inno.log; do [ -f "$f" ] && bash "$RUNNER_TEMP/report.sh" "$f" "$f"; done; true
       - uses: actions/upload-artifact@v4
         with:
           name: OpenPLS-${{ matrix.label }}
@@ -128,17 +162,17 @@ jobs:
           files: artefacts/*
           generate_release_notes: true
           body: |
-            ## Installation sans Python
+            ## Installation
 
-            | Système | Fichier |
-            |---|---|
-            | Windows 10/11 | `OpenPLS-…-Windows-installateur.exe` : double-clic, puis suivre l'assistant |
-            | Mac M1, M2, M3… | `OpenPLS-…-macOS-AppleSilicon.zip` |
-            | Mac Intel | `OpenPLS-…-macOS-Intel.zip` |
-            | Linux | `OpenPLS-…-Linux.tar.gz` |
+            | Système | Fichier | Installation |
+            |---|---|---|
+            | Windows 10/11 | `OpenPLS-…-Windows-installateur.exe` | double-clic, puis suivre l'assistant ; OpenPLS apparaît dans le menu Démarrer |
+            | Mac M1, M2, M3… | `OpenPLS-…-macOS-AppleSilicon.zip` | double-clic pour décompresser, puis glisser OpenPLS dans Applications |
+            | Mac Intel | `OpenPLS-…-macOS-Intel.zip` | idem |
+            | Linux | `OpenPLS-…-Linux.tar.gz` | décompresser, puis lancer `OpenPLS` (s'ouvre dans le navigateur) |
 
-            OpenPLS s'ouvre dans votre navigateur, mais **tout reste sur votre ordinateur** : vos données ne sont envoyées nulle part.
+            OpenPLS s'ouvre dans sa propre fenêtre. **Tout reste sur votre ordinateur** : vos données ne sont envoyées nulle part.
 
-            **Premier lancement** — l'application n'est pas encore signée numériquement :
+            **Premier lancement** — l'application n'est pas encore signée par Microsoft ou Apple :
             - Windows : si « Windows a protégé votre ordinateur » s'affiche, cliquez « Informations complémentaires » puis « Exécuter quand même ».
-            - macOS : décompressez, puis clic droit sur `OpenPLS` dans le dossier → « Ouvrir » → « Ouvrir ».
+            - macOS : si macOS refuse d'ouvrir OpenPLS, allez dans Réglages Système → Confidentialité et sécurité, puis cliquez « Ouvrir quand même » en bas de la page.

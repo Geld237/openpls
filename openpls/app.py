@@ -4,6 +4,11 @@ Lancement :  openpls-gui      ou      streamlit run openpls/app.py
 """
 from __future__ import annotations
 
+import os
+import sys
+import time
+from pathlib import Path
+
 import altair as alt
 import numpy as np
 import pandas as pd
@@ -105,6 +110,43 @@ def store(name: str, key, value):
     st.session_state.setdefault("adv", {})[name] = (key, value)
 
 
+DESKTOP = bool(os.environ.get("OPENPLS_DESKTOP"))  # lancé par l'application de bureau (fenêtre)
+
+
+def export_dir() -> Path:
+    docs = Path.home() / "Documents"
+    out = (docs if docs.is_dir() else Path.home()) / "OpenPLS"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
+
+
+def open_folder(path: Path) -> None:
+    import subprocess
+
+    if sys.platform == "win32":
+        os.startfile(path)  # noqa: S606
+    else:
+        subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
+
+
+def offer_file(label: str, data, filename: str, key: str, mime: str = "text/plain", container=st) -> None:
+    """Navigateur : bouton de téléchargement. Application de bureau : enregistrement direct dans
+    Documents/OpenPLS (les fenêtres intégrées gèrent mal les téléchargements)."""
+    if not DESKTOP:
+        container.download_button(label, data, filename, mime=mime, key=key, width="stretch")
+        return
+    if container.button(label.replace("⬇", "💾", 1), key=key, width="stretch"):
+        stem, ext = os.path.splitext(filename)
+        path = export_dir() / f"{stem}_{time.strftime('%Y-%m-%d_%H%M%S')}{ext}"
+        path.write_bytes(data if isinstance(data, bytes) else str(data).encode("utf-8"))
+        st.session_state["last_export"] = str(path)
+    last = st.session_state.get("last_export")
+    if last and Path(last).name.startswith(os.path.splitext(filename)[0]):
+        container.success(f"Enregistré : {last}")
+        if container.button("Ouvrir le dossier", key=f"{key}_open", width="stretch"):
+            open_folder(Path(last).parent)
+
+
 def run_button(label: str, key: str) -> bool:
     return st.button(f"▶  {label}", key=key, type="primary")
 
@@ -112,6 +154,9 @@ def run_button(label: str, key: str) -> bool:
 # ---------------------------------------------------------------- barre latérale
 st.sidebar.title("◎ OpenPLS")
 st.sidebar.caption("PLS-SEM libre et open source")
+if DESKTOP and st.sidebar.button("Quitter OpenPLS", key="quit_app"):
+    st.sidebar.info("OpenPLS se ferme…")
+    os._exit(0)  # arrête le serveur ; la fenêtre de l'application se ferme d'elle-même
 
 st.sidebar.header("1. Données")
 source = st.sidebar.radio("Source", ["Données d'exemple", "Exemple de second ordre", "Importer un fichier"],
@@ -808,9 +853,9 @@ with tabs[4]:
                 with c2:
                     st.markdown("**Coefficients de chemin par segment**")
                     st.dataframe(fmt(sol["paths"]), width="stretch")
-                    st.download_button("⬇  Appartenance aux segments (CSV)",
-                                       sol["posterior"].assign(segment=sol["membership"]).to_csv(index_label="observation"),
-                                       "segments_fimix.csv", key="fx_dl")
+                    offer_file("⬇  Appartenance aux segments (CSV)",
+                               sol["posterior"].assign(segment=sol["membership"]).to_csv(index_label="observation"),
+                               "segments_fimix.csv", key="fx_dl", mime="text/csv")
                 excel_extra.update({"FIMIX criteres": crit, "FIMIX chemins": sol["paths"]})
 
 with tabs[5]:
@@ -847,8 +892,6 @@ if hoc_eval is not None:
     sheets["Ordre sup qualite"] = hoc_eval["quality"]
 sheets.update(excel_extra)
 st.sidebar.header("3. Export")
-st.sidebar.download_button("⬇  Résultats (Excel)", to_excel(sheets), "openpls_resultats.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           width="stretch")
-st.sidebar.download_button("⬇  Syntaxe du modèle", st.session_state["syntax"], "modele.txt",
-                           width="stretch")
+offer_file("⬇  Résultats (Excel)", to_excel(sheets), "openpls_resultats.xlsx", key="dl_xlsx",
+           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", container=st.sidebar)
+offer_file("⬇  Syntaxe du modèle", st.session_state["syntax"], "modele.txt", key="dl_syntax", container=st.sidebar)
