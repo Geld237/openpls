@@ -57,18 +57,21 @@ jobs:
           PY
           SH
       - name: Dépendances
+        id: deps
         shell: bash
         run: python -m pip install ".[gui]" pyinstaller > deps.log 2>&1 || { bash "$RUNNER_TEMP/report.sh" dependances deps.log; exit 1; }
       - name: Construction (PyInstaller)
+        id: build
         shell: bash
         run: python packaging/build.py > build.log 2>&1 || { bash "$RUNNER_TEMP/report.sh" pyinstaller build.log; exit 1; }
       - name: Vérification de l'exécutable (démarrage du serveur)
+        id: launch
         shell: bash
         run: |
           EXE=dist/OpenPLS/OpenPLS; [ -f dist/OpenPLS/OpenPLS.exe ] && EXE=dist/OpenPLS/OpenPLS.exe
           "$EXE" --no-browser > launch.log 2>&1 &
           for i in $(seq 1 90); do
-            URL=$(grep -o "http://localhost:[0-9]*" launch.log | head -1)
+            URL=$(grep -o "http://localhost:[0-9]*" launch.log 2>/dev/null | head -1 || true)
             if [ -n "$URL" ] && curl -sf "$URL/_stcore/health" > /dev/null; then echo "serveur OK ($URL)"; break; fi
             sleep 2
           done
@@ -79,12 +82,14 @@ jobs:
         shell: bash
         run: echo "version=$(python -c 'import openpls; print(openpls.__version__)')" >> "$GITHUB_OUTPUT"
       - name: Installateur Windows (Inno Setup)
+        id: inno
         if: runner.os == 'Windows'
         run: |
           choco install innosetup -y --no-progress > inno.log 2>&1
           iscc /DAppVersion=${{ steps.v.outputs.version }} packaging\openpls.iss >> inno.log 2>&1
           if ($LASTEXITCODE -ne 0) { bash "$env:RUNNER_TEMP/report.sh" innosetup inno.log; exit 1 }
       - name: Archive macOS / Linux
+        id: archive
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -92,6 +97,14 @@ jobs:
           NAME=OpenPLS-${{ steps.v.outputs.version }}-${{ matrix.label }}
           cp ../packaging/LISEZMOI.txt OpenPLS/
           if [ "$RUNNER_OS" = "macOS" ]; then ditto -c -k --keepParent OpenPLS "$NAME.zip"; else tar czf "$NAME.tar.gz" OpenPLS; fi
+      - name: Diagnostic en cas d'échec
+        if: failure()
+        shell: bash
+        run: |
+          echo "deps=${{ steps.deps.outcome }} build=${{ steps.build.outcome }} launch=${{ steps.launch.outcome }} inno=${{ steps.inno.outcome }} archive=${{ steps.archive.outcome }}" > outcomes.log
+          ls -la dist dist/OpenPLS 2>&1 | head -40 >> outcomes.log || true
+          bash "$RUNNER_TEMP/report.sh" etapes outcomes.log || true
+          for f in launch.log build.log inno.log; do [ -f "$f" ] && bash "$RUNNER_TEMP/report.sh" "$f" "$f"; done; true
       - uses: actions/upload-artifact@v4
         with:
           name: OpenPLS-${{ matrix.label }}
