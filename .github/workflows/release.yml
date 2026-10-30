@@ -41,10 +41,27 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Outil de diagnostic
+        shell: bash
+        run: |
+          cat > "$RUNNER_TEMP/report.sh" <<'SH'
+          # usage : report.sh <titre> <fichier> — publie la fin du journal comme annotation d'erreur
+          python - "$1" "$2" <<'PY'
+          import sys
+          title, path = sys.argv[1], sys.argv[2]
+          try:
+              txt = open(path, encoding="utf-8", errors="replace").read()[-6000:]
+          except OSError as e:
+              txt = str(e)
+          print(f"::error title={title}::" + txt.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+          PY
+          SH
       - name: Dépendances
-        run: python -m pip install ".[gui]" pyinstaller
+        shell: bash
+        run: python -m pip install ".[gui]" pyinstaller > deps.log 2>&1 || { bash "$RUNNER_TEMP/report.sh" dependances deps.log; exit 1; }
       - name: Construction (PyInstaller)
-        run: python packaging/build.py
+        shell: bash
+        run: python packaging/build.py > build.log 2>&1 || { bash "$RUNNER_TEMP/report.sh" pyinstaller build.log; exit 1; }
       - name: Vérification de l'exécutable (démarrage du serveur)
         shell: bash
         run: |
@@ -55,8 +72,8 @@ jobs:
             if [ -n "$URL" ] && curl -sf "$URL/_stcore/health" > /dev/null; then echo "serveur OK ($URL)"; break; fi
             sleep 2
           done
-          curl -sf "$URL/_stcore/health" || { cat launch.log; exit 1; }
-          if grep -qi traceback launch.log; then cat launch.log; exit 1; fi
+          curl -sf "$URL/_stcore/health" || { bash "$RUNNER_TEMP/report.sh" demarrage launch.log; exit 1; }
+          if grep -qi traceback launch.log; then bash "$RUNNER_TEMP/report.sh" traceback launch.log; exit 1; fi
       - name: Version
         id: v
         shell: bash
@@ -64,8 +81,9 @@ jobs:
       - name: Installateur Windows (Inno Setup)
         if: runner.os == 'Windows'
         run: |
-          choco install innosetup -y --no-progress
-          iscc /DAppVersion=${{ steps.v.outputs.version }} packaging\openpls.iss
+          choco install innosetup -y --no-progress > inno.log 2>&1
+          iscc /DAppVersion=${{ steps.v.outputs.version }} packaging\openpls.iss >> inno.log 2>&1
+          if ($LASTEXITCODE -ne 0) { bash "$env:RUNNER_TEMP/report.sh" innosetup inno.log; exit 1 }
       - name: Archive macOS / Linux
         if: runner.os != 'Windows'
         shell: bash
