@@ -73,8 +73,9 @@ def test_bootstrap_failures_are_reported():
     d = pd.DataFrame({"a1": 0.3 * a + rng.normal(size=n), "a2": 0.3 * a + rng.normal(size=n),
                       **{f"b{k}": 0.8 * b + rng.normal(0, .6, n) for k in (1, 2, 3)}})
     m = Model.from_syntax("A =~ a1 + a2\nB =~ b1 + b2 + b3\nB ~ A")
-    with pytest.warns(BootstrapWarning, match="NON fiable"):
+    with pytest.warns(BootstrapWarning) as rec:
         bt = bootstrap(d, m, n_boot=200, consistent=True)
+    assert any("NON fiable" in str(w.message) for w in rec)
     assert bt.attrs["failure_rate"] > 0.05 and bt.attrs["n_boot_inadmissible"] > 0
 
 

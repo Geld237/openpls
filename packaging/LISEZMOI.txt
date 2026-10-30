@@ -1,0 +1,15 @@
+OpenPLS — PLS-SEM libre et gratuit
+==================================
+
+Lancer : double-cliquez sur « OpenPLS » dans ce dossier.
+Une fenêtre de terminal s'ouvre, puis OpenPLS s'affiche dans votre navigateur.
+Pour quitter OpenPLS, fermez la fenêtre du terminal.
+
+Vos données restent sur votre ordinateur : rien n'est envoyé sur Internet.
+
+macOS, premier lancement : l'application n'est pas encore signée. Faites un clic droit
+sur « OpenPLS » → « Ouvrir » → « Ouvrir ». Ensuite, un double-clic suffit.
+
+Linux : ./OpenPLS depuis un terminal ouvert dans ce dossier.
+
+Aide et code source : https://github.com/Geld237/openpls

@@ -1,0 +1,113 @@
+name: Publication
+
+# Crée une version : git tag v0.4.1 && git push origin v0.4.1
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:   # construction manuelle (sans publication) pour tester
+
+permissions:
+  contents: write
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q -W error::RuntimeWarning
+
+  build:
+    needs: tests
+    name: Application ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+          - os: macos-latest       # Apple Silicon (M1 et suivants)
+            label: macOS-AppleSilicon
+          - os: macos-15-intel     # Mac Intel (macos-13 retiré en décembre 2025)
+            label: macOS-Intel
+          - os: ubuntu-22.04
+            label: Linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dépendances
+        run: python -m pip install ".[gui]" pyinstaller
+      - name: Construction (PyInstaller)
+        run: python packaging/build.py
+      - name: Vérification de l'exécutable (démarrage du serveur)
+        shell: bash
+        run: |
+          EXE=dist/OpenPLS/OpenPLS; [ -f dist/OpenPLS/OpenPLS.exe ] && EXE=dist/OpenPLS/OpenPLS.exe
+          "$EXE" --no-browser > launch.log 2>&1 &
+          for i in $(seq 1 90); do
+            URL=$(grep -o "http://localhost:[0-9]*" launch.log | head -1)
+            if [ -n "$URL" ] && curl -sf "$URL/_stcore/health" > /dev/null; then echo "serveur OK ($URL)"; break; fi
+            sleep 2
+          done
+          curl -sf "$URL/_stcore/health" || { cat launch.log; exit 1; }
+          if grep -qi traceback launch.log; then cat launch.log; exit 1; fi
+      - name: Version
+        id: v
+        shell: bash
+        run: echo "version=$(python -c 'import openpls; print(openpls.__version__)')" >> "$GITHUB_OUTPUT"
+      - name: Installateur Windows (Inno Setup)
+        if: runner.os == 'Windows'
+        run: |
+          choco install innosetup -y --no-progress
+          iscc /DAppVersion=${{ steps.v.outputs.version }} packaging\openpls.iss
+      - name: Archive macOS / Linux
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd dist
+          NAME=OpenPLS-${{ steps.v.outputs.version }}-${{ matrix.label }}
+          cp ../packaging/LISEZMOI.txt OpenPLS/
+          if [ "$RUNNER_OS" = "macOS" ]; then ditto -c -k --keepParent OpenPLS "$NAME.zip"; else tar czf "$NAME.tar.gz" OpenPLS; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenPLS-${{ matrix.label }}
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artefacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artefacts/*
+          generate_release_notes: true
+          body: |
+            ## Installation sans Python
+
+            | Système | Fichier |
+            |---|---|
+            | Windows 10/11 | `OpenPLS-…-Windows-installateur.exe` : double-clic, puis suivre l'assistant |
+            | Mac M1, M2, M3… | `OpenPLS-…-macOS-AppleSilicon.zip` |
+            | Mac Intel | `OpenPLS-…-macOS-Intel.zip` |
+            | Linux | `OpenPLS-…-Linux.tar.gz` |
+
+            OpenPLS s'ouvre dans votre navigateur, mais **tout reste sur votre ordinateur** : vos données ne sont envoyées nulle part.
+
+            **Premier lancement** — l'application n'est pas encore signée numériquement :
+            - Windows : si « Windows a protégé votre ordinateur » s'affiche, cliquez « Informations complémentaires » puis « Exécuter quand même ».
+            - macOS : décompressez, puis clic droit sur `OpenPLS` dans le dossier → « Ouvrir » → « Ouvrir ».

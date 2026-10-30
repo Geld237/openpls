@@ -27,10 +27,29 @@ Le code est une **réimplémentation indépendante, écrite à partir de la litt
 | Segmentation | FIMIX-PLS, critères AIC3/AIC4/BIC/CAIC/EN |
 | Interface graphique | Éditeur de modèle par glisser-déposer, diagramme en direct, toutes les analyses ci-dessus, tableaux colorés selon les seuils, export Excel |
 
-## Installation
+[![Tests](https://github.com/Geld237/openpls/actions/workflows/tests.yml/badge.svg)](https://github.com/Geld237/openpls/actions/workflows/tests.yml)
+
+## Installation sans Python (recommandé)
+
+Télécharge le fichier qui correspond à ton ordinateur sur la page [**Releases**](https://github.com/Geld237/openpls/releases/latest) :
+
+| Système | Fichier | Lancement |
+|---|---|---|
+| Windows 10/11 | `OpenPLS-…-Windows-installateur.exe` | double-clic, suis l'assistant ; OpenPLS apparaît dans le menu Démarrer |
+| Mac M1, M2, M3… | `OpenPLS-…-macOS-AppleSilicon.zip` | décompresse, puis double-clic sur `OpenPLS` |
+| Mac Intel | `OpenPLS-…-macOS-Intel.zip` | idem |
+| Linux | `OpenPLS-…-Linux.tar.gz` | décompresse, puis `./OpenPLS` |
+
+OpenPLS s'ouvre dans ton navigateur, mais **tout reste sur ton ordinateur** : tes données ne sont envoyées nulle part. Pour quitter, ferme la petite fenêtre de terminal qui s'est ouverte.
+
+L'application n'est pas encore signée numériquement, donc au premier lancement :
+- **Windows** : si « Windows a protégé votre ordinateur » s'affiche, clique « Informations complémentaires » puis « Exécuter quand même ».
+- **macOS** : clic droit sur `OpenPLS` → « Ouvrir » → « Ouvrir ». Ensuite, un double-clic suffit.
+
+## Installation avec Python (développeurs)
 
 ```bash
-git clone https://github.com/<ton-compte>/openpls.git
+git clone https://github.com/Geld237/openpls.git
 cd openpls
 python -m venv .venv && source .venv/bin/activate   # Windows : .venv\Scripts\activate
 pip install -e ".[gui]"      # ou ".[dev]" pour lancer aussi les tests
@@ -225,6 +244,10 @@ La v0.4 a fait l'objet d'un audit externe indépendant (relecture adversariale d
 - Sarstedt, M. et al. (2019). How to specify, estimate, and validate higher-order constructs in PLS-SEM. *Australasian Marketing Journal*, 27(3).
 - Holm, S. (1979). A simple sequentially rejective multiple test procedure. *Scandinavian Journal of Statistics*, 6(2).
 - Hu, L. & Bentler, P. M. (1999). Cutoff criteria for fit indexes in covariance structure analysis. *Structural Equation Modeling*, 6(1).
+
+## Citer OpenPLS
+
+Le fichier [`CITATION.cff`](CITATION.cff) donne la référence à utiliser ; GitHub l'affiche via le bouton « Cite this repository ».
 
 ## Licence
 
