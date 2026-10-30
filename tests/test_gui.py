@@ -100,3 +100,46 @@ def test_f2_with_isolated_latent_is_finite():
     m = Model.from_syntax(SYNTAX)
     f2 = f_squared(fit(d, m), d)  # retirer XI2 -> ETA1 isole XI2
     assert np.isfinite(f2["f2"]).all() and (f2["f2"] > 0).all()
+
+
+# ------------------------------------------------------------------ analyses avancées et modération
+ADV_CASES = [
+    ("Prédiction (PLSpredict, CVPAT)", {"pp_k": 5, "pp_r": 1}, "Lancer PLSpredict", "CVPAT"),
+    ("Multigroupe (MGA, MICOM)", {"mga_np": 100, "mga_nb": 100}, "Lancer MGA", "Comparaison des chemins"),
+    ("Importance-performance (IPMA)", {}, None, "Niveau indicateur"),
+    ("Conditions nécessaires (NCA)", {"nca_np": 100}, "Lancer la NCA", "Tableau des goulots"),
+    ("Endogénéité (copules)", {"endo_nb": 100}, "Lancer le test", "Synthèse"),
+    ("CB-SEM / CFA", {}, None, "Chargements standardisés"),
+    ("Segmentation (FIMIX-PLS)", {"fx_st": 2}, "Lancer FIMIX", "Critères de choix du nombre de segments"),
+]
+
+
+@pytest.mark.parametrize("choice,inputs,button,expected", ADV_CASES, ids=[c[0].split()[0] for c in ADV_CASES])
+def test_app_advanced_analyses(choice, inputs, button, expected):
+    at = _app().run()
+    _btn(at, "Estimer").click().run()
+    at.radio(key="adv_choice").set_value(choice).run()
+    for k, v in inputs.items():
+        at.number_input(key=k).set_value(v)
+    if "fx_st" in inputs:
+        at.slider(key="fx_s").set_value(3)
+    at.run()
+    if button:
+        _btn(at, button).click().run()
+    assert not at.exception, at.exception
+    assert not at.error, [e.value for e in at.error]
+    assert expected in [s.value for s in at.subheader], [s.value for s in at.subheader]
+
+
+def test_app_moderation_and_mga_detects_group_difference():
+    at = _app().run()
+    at.text_area(key="syntax").set_value(
+        "XI1 =~ xi1_1 + xi1_2 + xi1_3\nXI2 =~ xi2_1 + xi2_2 + xi2_3\nETA1 =~ eta1_1 + eta1_2 + eta1_3\n"
+        "ETA1 ~ XI1 + XI2 + XI1:XI2\n").run()
+    _btn(at, "Estimer").click().run()
+    assert not at.exception, at.exception
+    assert "Modération : pentes simples" in [s.value for s in at.subheader]
+    at.number_input(key="n_boot").set_value(100).run()
+    _btn(at, "bootstrap").click().run()
+    assert "Pentes simples (modération)" in [s.value for s in at.subheader]
+    assert not at.exception, at.exception

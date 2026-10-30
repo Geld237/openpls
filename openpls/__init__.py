@@ -1,4 +1,6 @@
-"""OpenPLS — implémentation libre du PLS-SEM, réécrite à partir de la littérature publiée."""
+"""OpenPLS — implémentation libre du PLS-SEM, réécrite à partir de la littérature publiée.
+
+Analyses avancées dans les sous-modules : moderation, predict, mga, ipma, nca, endogeneity, cbsem, fimix."""
 from .model import Model
 from .algorithm import fit, PLSResult
 from .bootstrap import bootstrap, bootstrap_statistics
@@ -15,4 +17,4 @@ __all__ = [
     "quality_criteria", "fornell_larcker", "htmt", "f_squared",
     "total_effects", "total_indirect_effects", "specific_indirect_effects", "mediation_analysis",
 ]
-__version__ = "0.2.0"
+__version__ = "0.3.0"

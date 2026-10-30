@@ -40,6 +40,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True) -> str:
         '  edge [fontname="Helvetica", fontsize=9, color="#555555"];',
     ]
     r2 = res.r_squared if res is not None else {}
+    meas = res.measurement_result if res is not None else None
     for lv in model.latents:
         label = lv if lv not in r2 else f"{lv}\\nR² = {r2[lv]:.3f}"
         lines.append(
@@ -53,7 +54,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True) -> str:
                              f'fillcolor="#FFF6D6", color="#B8962E", fontsize=9, height=0.3];')
                 lab = ""
                 if res is not None:
-                    val = res.outer_loadings[(lv, ind)] if model.modes[lv] == "A" else res.outer_weights[(lv, ind)]
+                    val = meas.outer_loadings[(lv, ind)] if model.modes[lv] == "A" else meas.outer_weights[(lv, ind)]
                     lab = f", label={_q(f'{val:.3f}')}"
                 if model.modes[lv] == "A":
                     lines.append(f'  {_q("lv:" + lv)} -> {_q("mv:" + ind)} [arrowsize=0.6{lab}];')
@@ -65,6 +66,15 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True) -> str:
             v = res.path_coefficients.loc[s, d]
             lab = f", label={_q(f'{v:.3f}')}, penwidth={1 + 3 * min(abs(v), 1):.2f}"
         lines.append(f'  {_q("lv:" + s)} -> {_q("lv:" + d)} [color="#2E5E9E", fontcolor="#2E5E9E"{lab}];')
+    for a, b, d in getattr(model, "interactions", []):
+        name = f"{a}:{b}"
+        lab = ""
+        if res is not None and name in res.path_coefficients.index:
+            v = res.path_coefficients.loc[name, d]
+            lab = f", label={_q(f'{v:.3f}')}"
+        lines.append(f'  {_q("ix:" + name)} [label={_q(a + " × " + b)}, shape=diamond, style=filled, '
+                     f'fillcolor="#FFF6D6", color="#B8962E", fontsize=9];')
+        lines.append(f'  {_q("ix:" + name)} -> {_q("lv:" + d)} [color="#B8962E", fontcolor="#8a6d1f", style=dashed{lab}];')
     lines.append("}")
     return "\n".join(lines)
 
@@ -83,13 +93,18 @@ def to_excel(sheets: dict[str, pd.DataFrame]) -> bytes:
     return buf.getvalue()
 
 
-def prepare_data(df: pd.DataFrame, model: Model) -> tuple[pd.DataFrame, list[str]]:
-    """Sélectionne les indicateurs, convertit en numérique, supprime les lignes incomplètes."""
+def prepare_data(df: pd.DataFrame, model: Model, keep: list[str] | None = None) -> tuple[pd.DataFrame, list[str]]:
+    """Sélectionne les indicateurs, convertit en numérique, supprime les lignes incomplètes.
+
+    `keep` : colonnes supplémentaires conservées telles quelles (ex. variable de groupe)."""
     warnings = []
-    missing = [c for c in model.indicators if c not in df.columns]
+    keep = [c for c in (keep or []) if c not in model.indicators]
+    missing = [c for c in model.indicators + keep if c not in df.columns]
     if missing:
         raise KeyError(f"Colonnes introuvables dans les données : {', '.join(missing)}")
     sub = df[model.indicators].apply(pd.to_numeric, errors="coerce")
+    for c in keep:
+        sub[c] = df[c]
     n0 = len(sub)
     sub = sub.dropna()
     if len(sub) < n0:

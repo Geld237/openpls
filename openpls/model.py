@@ -13,11 +13,13 @@ class Model:
     measurement : {variable_latente: [indicateurs]}
     structural  : [(source, cible), ...]  — chemins entre variables latentes
     modes       : {variable_latente: "A" | "B"}  — A = réflectif, B = formatif (défaut A)
+    interactions: [(X, M, cible), ...]  — effets de modération X × M -> cible
     """
 
     measurement: dict[str, list[str]]
     structural: list[tuple[str, str]]
     modes: dict[str, str] = field(default_factory=dict)
+    interactions: list[tuple[str, str, str]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.latents: list[str] = list(self.measurement)
@@ -34,6 +36,17 @@ class Model:
             self.modes[lv] = mode
             if not self.measurement[lv]:
                 raise ValueError(f"{lv} n'a aucun indicateur")
+
+        for a, b, dst in self.interactions:
+            for lv in (a, b, dst):
+                if lv not in idx:
+                    raise ValueError(f"Interaction {a}:{b} -> {dst} : variable latente inconnue {lv}")
+            if a == b:
+                raise ValueError(f"Interaction {a}:{b} : il faut deux variables différentes")
+            missing = [lv for lv in (a, b) if (lv, dst) not in self.structural]
+            if missing:
+                raise ValueError(f"Interaction {a}:{b} -> {dst} : ajoute aussi les effets simples "
+                                 f"({dst} ~ {' + '.join(missing)})")
 
         # path[i, j] = 1 si latente i -> latente j
         k = len(self.latents)
@@ -56,10 +69,12 @@ class Model:
             Image        =~ img1 + img2 + img3     # réflectif (mode A)
             Prix         <~ prix1 + prix2          # formatif (mode B)
             Satisfaction ~  Image + Prix           # chemins structurels
+            Fidelite     ~  Satisfaction + Prix + Satisfaction:Prix   # modération
         """
         measurement: dict[str, list[str]] = {}
         modes: dict[str, str] = {}
         structural: list[tuple[str, str]] = []
+        interactions: list[tuple[str, str, str]] = []
         for no, raw in enumerate(text.splitlines(), 1):
             line = raw.split("#", 1)[0].strip()
             if not line:
@@ -79,10 +94,17 @@ class Model:
                 measurement[lhs] = terms
                 modes[lhs] = mode
             else:
-                structural.extend((src, lhs) for src in terms)
+                for t in terms:
+                    if ":" in t:
+                        parts = [p.strip() for p in t.split(":")]
+                        if len(parts) != 2 or not all(parts):
+                            raise ValueError(f"Ligne {no} : interaction invalide {t!r} (forme attendue X:M)")
+                        interactions.append((parts[0], parts[1], lhs))
+                    else:
+                        structural.append((t, lhs))
         if not measurement:
             raise ValueError("Aucune variable latente définie (utilise =~ ou <~)")
-        return cls(measurement, structural, modes)
+        return cls(measurement, structural, modes, interactions)
 
     def to_syntax(self) -> str:
         lines = ["# Modèle de mesure"]
@@ -93,9 +115,13 @@ class Model:
         lines.append("\n# Modèle structurel")
         for j, lv in enumerate(self.latents):
             pred = self.predecessors(j)
-            if len(pred):
-                lines.append(f"{lv:<{width}} ~  " + " + ".join(self.latents[i] for i in pred))
+            terms = [self.latents[i] for i in pred] + [f"{a}:{b}" for a, b, d in self.interactions if d == lv]
+            if terms:
+                lines.append(f"{lv:<{width}} ~  " + " + ".join(terms))
         return "\n".join(lines)
+
+    def without_interactions(self) -> "Model":
+        return Model(self.measurement, list(self.structural), dict(self.modes))
 
     @property
     def indicators(self) -> list[str]:

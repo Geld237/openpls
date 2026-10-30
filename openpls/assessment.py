@@ -5,10 +5,15 @@ import numpy as np
 import pandas as pd
 
 
+def _measured(res) -> list[str]:
+    """Latentes dont le modèle de mesure s'évalue (hors termes d'interaction X:M)."""
+    return [lv for lv in res.model.latents if ":" not in lv]
+
+
 def quality_criteria(res) -> pd.DataFrame:
     """Alpha de Cronbach, fiabilité composite (rho_c) et AVE pour chaque latente réflective."""
     rows = {}
-    for lv in res.model.latents:
+    for lv in _measured(res):
         inds = res.model.measurement[lv]
         lam = res.outer_loadings[lv].to_numpy()
         x = res.data_std[inds].to_numpy()
@@ -28,7 +33,8 @@ def quality_criteria(res) -> pd.DataFrame:
 
 def fornell_larcker(res) -> pd.DataFrame:
     """Diagonale = racine de l'AVE, hors diagonale = corrélations entre latentes."""
-    corr = res.scores.corr()
+    lvs = _measured(res)
+    corr = res.scores[lvs].corr()
     ave = quality_criteria(res)["AVE"]
     out = corr.copy()
     for lv in out.index:
@@ -38,7 +44,7 @@ def fornell_larcker(res) -> pd.DataFrame:
 
 def htmt(res) -> pd.DataFrame:
     """Ratio heterotrait-monotrait (Henseler, Ringle & Sarstedt 2015). Seuil usuel : < 0.85 / 0.90."""
-    lvs = res.model.latents
+    lvs = _measured(res)
     corr = res.data_std.corr().abs()
     out = pd.DataFrame(np.nan, index=lvs, columns=lvs)
 
@@ -62,15 +68,22 @@ def f_squared(res, data, **fit_kwargs) -> pd.DataFrame:
     from .algorithm import fit
     from .model import Model
 
-    m = res.model
+    spec = res.spec or res.model
+    if res.moderation and "moderation" not in fit_kwargs:
+        fit_kwargs = {**fit_kwargs, "moderation": res.moderation}
     rows = []
-    for src, dst in m.structural:
-        reduced = [p for p in m.structural if p != (src, dst)]
+    for src, dst in res.model.structural:
+        if ":" in src:  # terme d'interaction : on retire seulement l'interaction
+            structural = list(spec.structural)
+            inter = [i for i in spec.interactions if not (f"{i[0]}:{i[1]}" == src and i[2] == dst)]
+        else:  # effet simple : on retire aussi les interactions qui en dépendent
+            structural = [p for p in spec.structural if p != (src, dst)]
+            inter = [i for i in spec.interactions if not (i[2] == dst and src in i[:2])]
         r2_in = res.r_squared[dst]
-        if not any(d == dst for _, d in reduced):
+        if not any(d == dst for _, d in structural) and not any(i[2] == dst for i in inter):
             r2_out = 0.0
         else:
-            sub = fit(data, Model(m.measurement, reduced, dict(m.modes)), **fit_kwargs)
+            sub = fit(data, Model(spec.measurement, structural, dict(spec.modes), inter), **fit_kwargs)
             r2_out = sub.r_squared[dst]
         rows.append({"path": f"{src} -> {dst}", "f2": (r2_in - r2_out) / (1 - r2_in)})
     return pd.DataFrame(rows).set_index("path")

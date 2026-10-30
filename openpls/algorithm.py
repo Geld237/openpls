@@ -40,6 +40,14 @@ class PLSResult:
     iterations: int
     converged: bool
     consistent: bool = False
+    spec: Model | None = None          # modèle tel que spécifié (avec interactions) si différent de `model`
+    stage1: "PLSResult | None" = None  # modération en deux étapes : estimation sans interaction
+    moderation: str | None = None
+
+    @property
+    def measurement_result(self) -> "PLSResult":
+        """Résultat à utiliser pour évaluer le modèle de mesure."""
+        return self.stage1 if self.stage1 is not None else self
 
     def summary(self) -> str:
         from .assessment import quality_criteria, htmt
@@ -94,11 +102,23 @@ def fit(
     max_iter: int = 300,
     tol: float = 1e-7,
     consistent: bool = False,
+    moderation: str = "two_stage",
 ) -> PLSResult:
     """Estime un modèle PLS-SEM sur `data` (un indicateur par colonne).
 
     consistent=True active PLSc (Dijkstra & Henseler 2015) : corrige l'atténuation
-    des blocs réflectifs pour estimer des modèles de facteurs communs."""
+    des blocs réflectifs pour estimer des modèles de facteurs communs.
+    moderation : méthode pour les termes d'interaction X:M — "two_stage" (défaut),
+    "product_indicator" ou "orthogonal" (voir openpls.moderation)."""
+    if model.interactions:
+        from .moderation import fit_moderated
+
+        return fit_moderated(data, model, method=moderation, scheme=scheme, max_iter=max_iter,
+                             tol=tol, consistent=consistent)
+    return _fit_plain(data, model, scheme=scheme, max_iter=max_iter, tol=tol, consistent=consistent)
+
+
+def _fit_plain(data, model, scheme="path", max_iter=300, tol=1e-7, consistent=False) -> PLSResult:
     missing = [c for c in model.indicators if c not in data.columns]
     if missing:
         raise KeyError(f"Indicateurs absents des données : {missing}")
@@ -161,6 +181,11 @@ def fit(
         s = s_all[b, b]
         ww = np.outer(w, w)
         c2 = (w @ (s - np.diag(np.diag(s))) @ w) / (w @ (ww - np.diag(np.diag(ww))) @ w)
+        if not c2 > 0:  # bloc dégénéré (corrélations négatives) : rho_A indéfini
+            if consistent:
+                raise ValueError(f"PLSc impossible : rho_A indéfini pour {model.latents[j]}")
+            c_fac[j], rho_a[j] = np.nan, np.nan
+            continue
         c_fac[j] = np.sqrt(c2)
         rho_a[j] = (w @ w) ** 2 * c2
 

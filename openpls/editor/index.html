@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --blue:#2E5E9E; --blue-l:#DCE8F7; --gold:#B8962E; --gold-l:#FFF6D6; --red:#C0392B; --grey:#6b7280; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: "Source Sans Pro", Helvetica, Arial, sans-serif; font-size:13px; color:#1f2937; }
+  #app { display:flex; height:560px; border:1px solid #d1d5db; border-radius:8px; overflow:hidden; }
+  #side { width:190px; border-right:1px solid #e5e7eb; display:flex; flex-direction:column; background:#fafafa; }
+  #side h4 { margin:8px 10px 4px; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--grey); }
+  #side .hint { margin:0 10px 6px; font-size:11px; color:var(--grey); line-height:1.3; }
+  #chips { overflow-y:auto; padding:0 8px 8px; flex:1; }
+  .chip { display:block; padding:3px 8px; margin:3px 0; border:1px solid var(--gold); background:var(--gold-l);
+          border-radius:4px; cursor:grab; user-select:none; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .chip.used { opacity:.45; }
+  .chip.sel { outline:2px solid var(--blue); }
+  #main { flex:1; display:flex; flex-direction:column; min-width:0; }
+  #toolbar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; padding:6px 8px; border-bottom:1px solid #e5e7eb; min-height:42px; }
+  button { font:inherit; padding:4px 10px; border:1px solid #cbd5e1; background:#fff; border-radius:6px; cursor:pointer; }
+  button:hover { border-color:var(--blue); color:var(--blue); }
+  button.primary { background:var(--blue); color:#fff; border-color:var(--blue); }
+  button.primary:hover { color:#fff; filter:brightness(1.1); }
+  button.danger:hover { border-color:var(--red); color:var(--red); }
+  input, select { font:inherit; padding:3px 6px; border:1px solid #cbd5e1; border-radius:6px; }
+  .sep { width:1px; height:22px; background:#e5e7eb; margin:0 2px; }
+  #msg { font-size:12px; color:var(--grey); margin-left:auto; }
+  #msg.err { color:var(--red); font-weight:600; }
+  #canvas { position:relative; flex:1; overflow:auto; background:
+            radial-gradient(circle, #e5e7eb 1px, transparent 1px) 0 0/18px 18px; }
+  #edges { position:absolute; left:0; top:0; pointer-events:none; overflow:visible; }
+  #edges .hit { pointer-events:stroke; cursor:pointer; }
+  .lv { position:absolute; min-width:120px; max-width:180px; border:2px solid var(--blue); background:var(--blue-l);
+        border-radius:28px; padding:6px 22px 6px 12px; cursor:move; user-select:none; box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  .lv.formative { border-style:dashed; background:#eef2f7; }
+  .lv.sel { box-shadow:0 0 0 3px rgba(46,94,158,.35); }
+  .lv.drop { background:#c7dbf5; }
+  .lv .name { font-weight:700; color:var(--blue); }
+  .lv .mode { font-size:10px; color:var(--grey); margin-left:4px; }
+  .lv .inds { margin-top:3px; display:flex; flex-wrap:wrap; gap:2px; }
+  .lv .ind { font-size:10px; background:var(--gold-l); border:1px solid var(--gold); border-radius:3px; padding:0 3px; cursor:pointer; }
+  .lv .ind:hover { text-decoration:line-through; color:var(--red); }
+  .lv .empty { font-size:10px; color:var(--red); }
+  .lv .handle { position:absolute; right:-8px; top:50%; margin-top:-8px; width:16px; height:16px; border-radius:50%;
+                background:var(--blue); border:2px solid #fff; cursor:crosshair; }
+  .lv .handle:hover { transform:scale(1.25); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <h4>Indicateurs</h4>
+    <p class="hint">Glisse un indicateur sur une variable latente, ou sur le fond pour en créer une. Ctrl/⌘-clic : sélection multiple.</p>
+    <div id="chips"></div>
+  </div>
+  <div id="main">
+    <div id="toolbar"></div>
+    <div id="canvas"><svg id="edges"></svg></div>
+  </div>
+</div>
+<script>
+"use strict";
+// ---------------------------------------------------------------- protocole Streamlit (composants v1)
+function post(type, extra) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*"); }
+function setValue(value) { post("streamlit:setComponentValue", { value, dataType: "json" }); }
+post("streamlit:componentReady", { apiVersion: 1 });
+post("streamlit:setFrameHeight", { height: 566 });
+
+let S = { latents: [], paths: [], interactions: [] };   // latents: {name, mode, indicators, x, y}
+let columns = [], version = null, selected = null, chipSel = new Set(), msg = "", msgErr = false;
+
+window.addEventListener("message", (ev) => {
+  const d = ev.data;
+  if (!d || d.type !== "streamlit:render") return;
+  const a = d.args;
+  columns = a.columns || [];
+  if (a.version !== version) {               // nouveau modèle venant de Python : on recharge
+    version = a.version;
+    S = JSON.parse(JSON.stringify(a.state));
+    selected = null; chipSel.clear();
+    setMsg("");
+  }
+  render();
+});
+
+// ---------------------------------------------------------------- utilitaires
+const $ = (id) => document.getElementById(id);
+const lvByName = (n) => S.latents.find((l) => l.name === n);
+function setMsg(t, err) { msg = t; msgErr = !!err; const m = $("msg"); if (m) { m.textContent = t; m.className = err ? "err" : ""; } }
+function cleanName(s) { s = String(s).replace(/[^A-Za-z0-9_.]/g, "_").replace(/^_+|_+$/g, ""); return /^[A-Za-z_]/.test(s) ? s : "LV_" + s; }
+function uniqueName(base) { let n = cleanName(base) || "LV", k = 2, out = n; while (lvByName(out)) out = n + "_" + k++; return out; }
+function prefixOf(col) { const m = String(col).match(/^(.*?)[_\-. ]?(\d+)$/); return (m && m[1]) ? m[1].toUpperCase() : String(col).toUpperCase(); }
+function owner(col) { return S.latents.find((l) => l.indicators.includes(col)); }
+function reaches(from, to) {        // existe-t-il un chemin from -> ... -> to ?
+  const seen = new Set(), stack = [from];
+  while (stack.length) { const c = stack.pop(); if (c === to) return true; if (seen.has(c)) continue; seen.add(c);
+    S.paths.filter((p) => p[0] === c).forEach((p) => stack.push(p[1])); }
+  return false;
+}
+
+// ---------------------------------------------------------------- actions
+function assign(cols, lvName) {
+  const lv = lvByName(lvName);
+  cols.forEach((c) => { S.latents.forEach((l) => { l.indicators = l.indicators.filter((i) => i !== c); });
+                        lv.indicators.push(c); });
+  chipSel.clear(); render();
+}
+function addLatent(name, x, y, cols) {
+  const lv = { name: uniqueName(name), mode: "A", indicators: [], x, y };
+  S.latents.push(lv);
+  if (cols && cols.length) assign(cols, lv.name); else render();
+  select({ type: "lv", name: lv.name });
+}
+function addPath(src, dst) {
+  if (src === dst) return;
+  if (S.paths.some((p) => p[0] === src && p[1] === dst)) return setMsg("Ce chemin existe déjà", true);
+  if (reaches(dst, src)) return setMsg("Impossible : ce chemin créerait un cycle", true);
+  S.paths.push([src, dst]); setMsg(src + " → " + dst + " ajouté"); render();
+}
+function removeLatent(name) {
+  S.latents = S.latents.filter((l) => l.name !== name);
+  S.paths = S.paths.filter((p) => p[0] !== name && p[1] !== name);
+  S.interactions = S.interactions.filter((i) => !i.includes(name));
+  selected = null; render();
+}
+function rename(oldN, newN) {
+  newN = cleanName(newN);
+  if (!newN || newN === oldN) return;
+  if (lvByName(newN)) return setMsg("Nom déjà utilisé : " + newN, true);
+  lvByName(oldN).name = newN;
+  S.paths.forEach((p) => { if (p[0] === oldN) p[0] = newN; if (p[1] === oldN) p[1] = newN; });
+  S.interactions.forEach((it) => { for (let k = 0; k < 3; k++) if (it[k] === oldN) it[k] = newN; });
+  selected = { type: "lv", name: newN }; render();
+}
+function toSyntax() {
+  const lines = ["# Modèle de mesure  ( =~ réflectif,  <~ formatif )"];
+  S.latents.forEach((l) => { if (l.indicators.length) lines.push(`${l.name} ${l.mode === "B" ? "<~" : "=~"} ${l.indicators.join(" + ")}`); });
+  lines.push("", "# Modèle structurel  ( cible ~ source1 + source2 ;  X:M = modération )");
+  S.latents.forEach((l) => {
+    const terms = S.paths.filter((p) => p[1] === l.name).map((p) => p[0])
+      .concat(S.interactions.filter((i) => i[2] === l.name).map((i) => i[0] + ":" + i[1]));
+    if (terms.length) lines.push(`${l.name} ~ ${terms.join(" + ")}`);
+  });
+  return lines.join("\n") + "\n";
+}
+function apply() {
+  const empty = S.latents.filter((l) => !l.indicators.length).map((l) => l.name);
+  if (empty.length) return setMsg("Sans indicateur : " + empty.join(", "), true);
+  if (!S.latents.length) return setMsg("Ajoute au moins une variable latente", true);
+  const positions = {}; S.latents.forEach((l) => { positions[l.name] = [l.x, l.y]; });
+  setValue({ nonce: Date.now() + Math.random(), syntax: toSyntax(), positions });
+  setMsg("Modèle envoyé ✓");
+}
+function autoLayout() {
+  const depth = {}; const lvs = S.latents.map((l) => l.name);
+  const d = (n, seen) => { if (depth[n] !== undefined) return depth[n]; if (seen.has(n)) return 0; seen.add(n);
+    const preds = S.paths.filter((p) => p[1] === n).map((p) => p[0]);
+    return (depth[n] = preds.length ? 1 + Math.max(...preds.map((p) => d(p, seen))) : 0); };
+  lvs.forEach((n) => d(n, new Set()));
+  const cols = {}; lvs.forEach((n) => (cols[depth[n]] = cols[depth[n]] || []).push(n));
+  Object.entries(cols).forEach(([c, names]) => names.forEach((n, i) => { const l = lvByName(n); l.x = 30 + c * 230; l.y = 30 + i * 130 + (c % 2) * 65; }));
+  render();
+}
+function select(sel) { selected = sel; render(); }
+
+// ---------------------------------------------------------------- rendu
+function render() {
+  // indicateurs
+  const chips = $("chips"); chips.innerHTML = "";
+  columns.forEach((c) => {
+    const el = document.createElement("div"); const o = owner(c);
+    el.className = "chip" + (o ? " used" : "") + (chipSel.has(c) ? " sel" : "");
+    el.textContent = c + (o ? "  · " + o.name : ""); el.title = o ? "Dans " + o.name : "Non utilisé";
+    el.draggable = true; el.dataset.col = c;
+    el.addEventListener("click", (e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { chipSel.has(c) ? chipSel.delete(c) : chipSel.add(c); } else { chipSel = new Set([c]); } render(); });
+    el.addEventListener("dragstart", (e) => { if (!chipSel.has(c)) chipSel = new Set([c]);
+      e.dataTransfer.setData("text/plain", JSON.stringify([...chipSel])); e.dataTransfer.effectAllowed = "move"; });
+    chips.appendChild(el);
+  });
+
+  // barre d'outils
+  const tb = $("toolbar"); tb.innerHTML = "";
+  const btn = (label, fn, cls) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; tb.appendChild(b); return b; };
+  const sep = () => { const s = document.createElement("span"); s.className = "sep"; tb.appendChild(s); };
+  btn("+ Variable latente", () => addLatent("LV", 40 + 25 * (S.latents.length % 8), 40 + 25 * (S.latents.length % 8), [...chipSel]));
+  btn("Disposition auto", autoLayout);
+  if (selected && selected.type === "lv" && lvByName(selected.name)) {
+    const lv = lvByName(selected.name); sep();
+    const inp = document.createElement("input"); inp.value = lv.name; inp.size = 10; inp.title = "Renommer (Entrée)";
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") rename(lv.name, inp.value); });
+    inp.addEventListener("blur", () => rename(lv.name, inp.value));
+    tb.appendChild(inp);
+    btn(lv.mode === "A" ? "Réflectif (=~)" : "Formatif (<~)", () => { lv.mode = lv.mode === "A" ? "B" : "A"; render(); }).title = "Basculer réflectif / formatif";
+    btn("Supprimer", () => removeLatent(lv.name), "danger");
+  } else if (selected && selected.type === "path" && S.paths[selected.i]) {
+    const p = S.paths[selected.i]; sep();
+    const lab = document.createElement("span"); lab.textContent = p[0] + " → " + p[1]; tb.appendChild(lab);
+    const sel = document.createElement("select");
+    S.latents.filter((l) => l.name !== p[0] && l.name !== p[1]).forEach((l) => { const o = document.createElement("option"); o.value = o.textContent = l.name; sel.appendChild(o); });
+    if (sel.options.length) {
+      tb.appendChild(sel);
+      btn("+ Modérateur", () => {
+        const m = sel.value, tgt = p[1];
+        if (!S.paths.some((q) => q[0] === m && q[1] === tgt)) S.paths.push([m, tgt]);   // effet simple requis
+        if (!S.interactions.some((i) => i[0] === p[0] && i[1] === m && i[2] === tgt)) S.interactions.push([p[0], m, tgt]);
+        setMsg("Modération " + p[0] + " × " + m + " → " + tgt); render();
+      }).title = "Ajoute l'effet d'interaction (et l'effet simple du modérateur)";
+    }
+    btn("Supprimer le chemin", () => {
+      S.interactions = S.interactions.filter((i) => !(i[2] === p[1] && (i[0] === p[0] || i[1] === p[0])));
+      S.paths.splice(selected.i, 1); selected = null; render(); }, "danger");
+  } else if (selected && selected.type === "int" && S.interactions[selected.i]) {
+    const it = S.interactions[selected.i]; sep();
+    const lab = document.createElement("span"); lab.textContent = "Interaction " + it[0] + " × " + it[1] + " → " + it[2]; tb.appendChild(lab);
+    btn("Supprimer", () => { S.interactions.splice(selected.i, 1); selected = null; render(); }, "danger");
+  }
+  const m = document.createElement("span"); m.id = "msg"; m.textContent = msg; m.className = msgErr ? "err" : ""; tb.appendChild(m);
+  btn("Appliquer au modèle ▶", apply, "primary");
+
+  // nœuds
+  const cv = $("canvas");
+  cv.querySelectorAll(".lv").forEach((n) => n.remove());
+  S.latents.forEach((lv) => {
+    const el = document.createElement("div");
+    el.className = "lv" + (lv.mode === "B" ? " formative" : "") + (selected && selected.type === "lv" && selected.name === lv.name ? " sel" : "");
+    el.style.left = lv.x + "px"; el.style.top = lv.y + "px"; el.dataset.name = lv.name;
+    el.innerHTML = `<span class="name"></span><span class="mode">${lv.mode === "B" ? "formatif" : "réflectif"}</span><div class="inds"></div><div class="handle" title="Glisser vers une autre variable pour créer un chemin"></div>`;
+    el.querySelector(".name").textContent = lv.name;
+    const inds = el.querySelector(".inds");
+    if (!lv.indicators.length) inds.innerHTML = '<span class="empty">dépose des indicateurs ici</span>';
+    lv.indicators.forEach((c) => { const s = document.createElement("span"); s.className = "ind"; s.textContent = c; s.title = "Cliquer pour retirer";
+      s.addEventListener("mousedown", (e) => e.stopPropagation());
+      s.addEventListener("click", (e) => { e.stopPropagation(); lv.indicators = lv.indicators.filter((i) => i !== c); render(); });
+      inds.appendChild(s); });
+    el.addEventListener("dragover", (e) => { e.preventDefault(); el.classList.add("drop"); });
+    el.addEventListener("dragleave", () => el.classList.remove("drop"));
+    el.addEventListener("drop", (e) => { e.preventDefault(); e.stopPropagation(); assign(JSON.parse(e.dataTransfer.getData("text/plain")), lv.name); });
+    el.addEventListener("mousedown", (e) => startMove(e, lv));
+    el.querySelector(".handle").addEventListener("mousedown", (e) => { e.stopPropagation(); startLink(e, lv); });
+    cv.appendChild(el);
+  });
+  requestAnimationFrame(drawEdges);
+}
+
+function center(name) {
+  const el = $("canvas").querySelector(`.lv[data-name="${CSS.escape(name)}"]`);
+  if (!el) return null;
+  return { x: el.offsetLeft + el.offsetWidth / 2, y: el.offsetTop + el.offsetHeight / 2, w: el.offsetWidth / 2, h: el.offsetHeight / 2 };
+}
+function border(a, b) {      // point d'intersection du segment a->b avec l'ellipse de b
+  const dx = a.x - b.x, dy = a.y - b.y, t = 1 / Math.sqrt((dx * dx) / (b.w * b.w) + (dy * dy) / (b.h * b.h) || 1);
+  return { x: b.x + dx * t, y: b.y + dy * t };
+}
+function drawEdges() {
+  const svg = $("edges"), cv = $("canvas");
+  svg.setAttribute("width", cv.scrollWidth); svg.setAttribute("height", cv.scrollHeight);
+  let h = `<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E5E9E"/></marker>
+           <marker id="arrM" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B8962E"/></marker></defs>`;
+  const mids = {};
+  const rects = S.latents.map((l) => ({ name: l.name, el: $("canvas").querySelector(`.lv[data-name="${CSS.escape(l.name)}"]`) }))
+    .filter((r) => r.el).map((r) => ({ name: r.name, x0: r.el.offsetLeft - 8, y0: r.el.offsetTop - 8,
+                                       x1: r.el.offsetLeft + r.el.offsetWidth + 8, y1: r.el.offsetTop + r.el.offsetHeight + 8 }));
+  const blocker = (a, b, s, e) => rects.find((r) => r.name !== a && r.name !== b && [...Array(24).keys()].some((k) => {
+    const t = (k + 0.5) / 24, x = s.x + (e.x - s.x) * t, y = s.y + (e.y - s.y) * t;
+    return x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1; }));
+  S.paths.forEach((p, i) => {
+    const a = center(p[0]), b = center(p[1]); if (!a || !b) return;
+    let s = border(b, a), e = border(a, b), d;
+    const blk = blocker(p[0], p[1], s, e);
+    if (blk) {   // une variable est sur le trajet : on courbe la flèche pour la contourner
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      let nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+      const bc = { x: (blk.x0 + blk.x1) / 2, y: (blk.y0 + blk.y1) / 2 };
+      if ((bc.x - mx) * nx + (bc.y - my) * ny > 0) { nx = -nx; ny = -ny; }
+      const off = Math.max(90, (blk.y1 - blk.y0) * 1.6);
+      const c = { x: mx + nx * off, y: my + ny * off };
+      s = border(c, Object.assign({}, a)); e = border(c, Object.assign({}, b));
+      d = `M${s.x},${s.y} Q${c.x},${c.y} ${e.x},${e.y}`;
+      mids[p[0] + "→" + p[1]] = { x: (s.x + 2 * c.x + e.x) / 4, y: (s.y + 2 * c.y + e.y) / 4 };
+    } else {
+      d = `M${s.x},${s.y} L${e.x},${e.y}`;
+      mids[p[0] + "→" + p[1]] = { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
+    }
+    const sel = selected && selected.type === "path" && selected.i === i;
+    h += `<path d="${d}" fill="none" stroke="${sel ? "#C0392B" : "#2E5E9E"}" stroke-width="${sel ? 3 : 2}" marker-end="url(#arr)"/>`;
+    h += `<path class="hit" data-kind="path" data-i="${i}" d="${d}" fill="none" stroke="transparent" stroke-width="14"/>`;
+  });
+  S.interactions.forEach((it, i) => {
+    const m = center(it[1]), mid = mids[it[0] + "→" + it[2]]; if (!m || !mid) return;
+    const s = border(mid, m), sel = selected && selected.type === "int" && selected.i === i;
+    h += `<line x1="${s.x}" y1="${s.y}" x2="${mid.x}" y2="${mid.y}" stroke="${sel ? "#C0392B" : "#B8962E"}" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrM)"/>`;
+    h += `<line class="hit" data-kind="int" data-i="${i}" x1="${s.x}" y1="${s.y}" x2="${mid.x}" y2="${mid.y}" stroke="transparent" stroke-width="14"/>`;
+  });
+  if (link) h += `<line x1="${link.x1}" y1="${link.y1}" x2="${link.x2}" y2="${link.y2}" stroke="#2E5E9E" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#arr)"/>`;
+  svg.innerHTML = h;
+  svg.querySelectorAll(".hit").forEach((ln) => ln.addEventListener("mousedown", (e) => { e.stopPropagation(); select({ type: ln.dataset.kind, i: +ln.dataset.i }); }));
+}
+
+// ---------------------------------------------------------------- déplacement et liaison
+let link = null;
+function canvasXY(e) { const r = $("canvas").getBoundingClientRect(); return { x: e.clientX - r.left + $("canvas").scrollLeft, y: e.clientY - r.top + $("canvas").scrollTop }; }
+function startMove(e, lv) {
+  e.preventDefault();
+  const p0 = canvasXY(e), x0 = lv.x, y0 = lv.y; let moved = false;
+  const el = $("canvas").querySelector(`.lv[data-name="${CSS.escape(lv.name)}"]`);
+  const mv = (ev) => { const p = canvasXY(ev); const dx = p.x - p0.x, dy = p.y - p0.y;
+    if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+    lv.x = Math.max(0, x0 + dx); lv.y = Math.max(0, y0 + dy); el.style.left = lv.x + "px"; el.style.top = lv.y + "px"; drawEdges(); };
+  const up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); if (!moved) select({ type: "lv", name: lv.name }); };
+  window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+}
+function startLink(e, lv) {
+  e.preventDefault();
+  const c = center(lv.name); link = { x1: c.x, y1: c.y, x2: c.x, y2: c.y };
+  const mv = (ev) => { const p = canvasXY(ev); link.x2 = p.x; link.y2 = p.y; drawEdges(); };
+  const up = (ev) => {
+    window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); link = null;
+    const t = document.elementFromPoint(ev.clientX, ev.clientY); const node = t && t.closest(".lv");
+    if (node && node.dataset.name !== lv.name) addPath(lv.name, node.dataset.name); else drawEdges();
+  };
+  window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
+}
+
+const cvs = $("canvas");
+cvs.addEventListener("dragover", (e) => e.preventDefault());
+cvs.addEventListener("drop", (e) => { e.preventDefault(); const cols = JSON.parse(e.dataTransfer.getData("text/plain") || "[]");
+  if (!cols.length) return; const p = canvasXY(e); addLatent(prefixOf(cols[0]), p.x - 60, p.y - 20, cols); });
+cvs.addEventListener("mousedown", (e) => { if (e.target === cvs || e.target.id === "edges") select(null); });
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+    if (selected.type === "lv") removeLatent(selected.name);
+    else if (selected.type === "path") { const p = S.paths[selected.i];
+      S.interactions = S.interactions.filter((i) => !(i[2] === p[1] && (i[0] === p[0] || i[1] === p[0]))); S.paths.splice(selected.i, 1); selected = null; render(); }
+    else if (selected.type === "int") { S.interactions.splice(selected.i, 1); selected = null; render(); }
+  }
+});
+render();
+</script>
+</body>
+</html>
