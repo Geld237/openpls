@@ -39,17 +39,28 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True) -> str:
         '  node [fontname="Helvetica", fontsize=11];',
         '  edge [fontname="Helvetica", fontsize=9, color="#555555"];',
     ]
-    r2 = res.r_squared if res is not None else {}
-    meas = res.measurement_result if res is not None else None
+    if res is not None:
+        from .higher_order import structural_view
+
+        r2 = structural_view(res).r_squared
+        meas = res.measurement_result
+    else:
+        r2, meas = {}, None
+    hoc_tbl = None
+    if res is not None and getattr(model, "higher_order", None):
+        from .higher_order import higher_order_measurement
+
+        hoc_tbl = higher_order_measurement(res)["components"]
     for lv in model.latents:
         label = lv if lv not in r2 else f"{lv}\\nR² = {r2[lv]:.3f}"
+        extra = ", peripheries=2" if lv in getattr(model, "higher_order", {}) else ""
         lines.append(
             f'  {_q("lv:" + lv)} [label={_q(label)}, shape=ellipse, style=filled, '
-            f'fillcolor="#DCE8F7", color="#2E5E9E", penwidth=1.5];'
+            f'fillcolor="#DCE8F7", color="#2E5E9E", penwidth=1.5{extra}];'
         )
     if show_indicators:
         for lv in model.latents:
-            for ind in model.measurement[lv]:
+            for ind in model.measurement.get(lv, []):
                 lines.append(f'  {_q("mv:" + ind)} [label={_q(ind)}, shape=box, style=filled, '
                              f'fillcolor="#FFF6D6", color="#B8962E", fontsize=9, height=0.3];')
                 lab = ""
@@ -60,6 +71,15 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True) -> str:
                     lines.append(f'  {_q("lv:" + lv)} -> {_q("mv:" + ind)} [arrowsize=0.6{lab}];')
                 else:
                     lines.append(f'  {_q("mv:" + ind)} -> {_q("lv:" + lv)} [arrowsize=0.6{lab}];')
+    for hoc, locs in getattr(model, "higher_order", {}).items():
+        for loc in locs:
+            lab = ""
+            if hoc_tbl is not None:
+                col = "chargement" if model.modes[hoc] == "A" else "poids"
+                lab = f", label={_q(f'{hoc_tbl.loc[(hoc, loc), col]:.3f}')}"
+            a, b = (hoc, loc) if model.modes[hoc] == "A" else (loc, hoc)
+            lines.append(f'  {_q("lv:" + a)} -> {_q("lv:" + b)} [color="#6b7280", fontcolor="#52514e", '
+                         f'style=dashed, arrowsize=0.7{lab}];')
     for s, d in model.structural:
         lab = ""
         if res is not None:

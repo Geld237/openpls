@@ -7,7 +7,8 @@ Modèle (notation LISREL « tout-y ») :
 Fonction d'ajustement : F_ML = log|Σ| + tr(S Σ⁻¹) - log|S| - p, avec S la matrice de covariance
 (diviseur N, comme lavaan). Identification par variable marqueur (1er chargement fixé à 1).
 Ψ : variances et covariances libres entre latentes exogènes ; variances résiduelles des
-endogènes. Les construits doivent être réflectifs.
+endogènes. Les construits doivent être réflectifs. Second ordre : HOC -> composantes dans B,
+première relation fixée à 1 ; la CFA de second ordre s'obtient avec cfa=True.
 
 Indices : χ² = N·F, ddl, CFI, TLI, RMSEA (+ IC 90 %), SRMR, AIC, BIC.
 Erreurs-types : inverse de la matrice d'information (hessienne numérique de F).
@@ -35,29 +36,44 @@ class CBSEMResult:
     residuals: pd.DataFrame        # résidus standardisés (corrélations)
     converged: bool
     n: int
+    higher_order_loadings: pd.Series = None  # chargements standardisés de second ordre (HOC -> composante)
 
 
 class _Spec:
     def __init__(self, model: Model, cfa: bool):
         if any(m != "A" for m in model.modes.values()):
-            raise ValueError("Le CB-SEM exige des construits réflectifs (=~)")
+            raise ValueError("Le CB-SEM exige des construits réflectifs (=~), y compris d'ordre supérieur")
         if model.interactions:
             raise ValueError("Les interactions ne sont pas prises en charge en CB-SEM")
         self.lvs = model.latents
         self.inds = model.indicators
         k, p = len(self.lvs), len(self.inds)
         self.k, self.p = k, p
-        path = np.zeros((k, k), int) if cfa else model.path
+        path = np.zeros((k, k), int) if cfa else model.path.copy()
+        # second ordre : HOC -> composante, 1re relation fixée à 1 (échelle du HOC)
+        self.b0 = np.zeros((k, k))
+        fixed = set()
+        for hoc, locs in model.higher_order.items():
+            h = self.lvs.index(hoc)
+            for r, loc in enumerate(locs):
+                c = self.lvs.index(loc)
+                path[h, c] = 1
+                if r == 0:
+                    self.b0[c, h] = 1.0
+                    fixed.add((h, c))
+        self.hoc_edges = {(self.lvs.index(h), self.lvs.index(l)) for h, ls in model.higher_order.items() for l in ls}
         exo = [j for j in range(k) if not path[:, j].any()]
         params = []  # (type, i, j, libellé)
         for j, lv in enumerate(self.lvs):
-            for r, ind in enumerate(model.measurement[lv]):
+            for r, ind in enumerate(model.measurement.get(lv, [])):
                 if r > 0:
                     params.append(("L", self.inds.index(ind), j, f"{lv} =~ {ind}"))
         for i in range(k):
             for j in range(k):
-                if path[i, j]:
-                    params.append(("B", j, i, f"{self.lvs[j]} ~ {self.lvs[i]}"))
+                if path[i, j] and (i, j) not in fixed:
+                    lbl = (f"{self.lvs[i]} =~ {self.lvs[j]}" if (i, j) in self.hoc_edges
+                           else f"{self.lvs[j]} ~ {self.lvs[i]}")
+                    params.append(("B", j, i, lbl))
         for a_i, a in enumerate(exo):
             for b in exo[a_i:]:
                 params.append(("P", a, b, f"{self.lvs[a]} ~~ {self.lvs[b]}"))
@@ -69,12 +85,18 @@ class _Spec:
         self.params = params
         self.lam0 = np.zeros((p, k))
         for j, lv in enumerate(self.lvs):
-            self.lam0[self.inds.index(model.measurement[lv][0]), j] = 1.0
+            if lv in model.measurement:
+                self.lam0[self.inds.index(model.measurement[lv][0]), j] = 1.0
+        # indicateur de référence pour les valeurs de départ (1er indicateur de la 1re composante pour un HOC)
+        self.marker = {}
+        for j, lv in enumerate(self.lvs):
+            first = lv if lv in model.measurement else model.higher_order[lv][0]
+            self.marker[j] = self.inds.index(model.measurement[first][0])
         self.exo = exo
         self.path = path
 
     def matrices(self, theta):
-        lam, b = self.lam0.copy(), np.zeros((self.k, self.k))
+        lam, b = self.lam0.copy(), self.b0.copy()
         psi, th = np.zeros((self.k, self.k)), np.zeros((self.p, self.p))
         for (t, i, j, _), v in zip(self.params, theta):
             if t == "L":
@@ -111,8 +133,14 @@ def fit_cbsem(data: pd.DataFrame, model: Model, cfa: bool = False, max_iter: int
     n, p = x.shape
     s = np.cov(x, rowvar=False, ddof=0)
     sign, logdet_s = np.linalg.slogdet(s)
-    if sign <= 0:
-        raise ValueError("Matrice de covariance non définie positive")
+    if n <= p or sign <= 0 or np.linalg.matrix_rank(s) < p:
+        raise ValueError(f"Matrice de covariance singulière (n = {n} pour {p} indicateurs, ou indicateurs "
+                         "colinéaires) : le CB-SEM exige nettement plus d'observations que d'indicateurs")
+    df_model = p * (p + 1) // 2 - len(spec.params)
+    if df_model < 0:
+        raise ValueError(f"Modèle non identifié : {len(spec.params)} paramètres pour {p * (p + 1) // 2} "
+                         f"moments (ddl = {df_model}). Ajoute des indicateurs (au moins 3 par construit "
+                         "est recommandé en CB-SEM).")
 
     # valeurs de départ
     start, bounds = [], []
@@ -120,9 +148,9 @@ def fit_cbsem(data: pd.DataFrame, model: Model, cfa: bool = False, max_iter: int
         if t == "L":
             start.append(1.0); bounds.append((None, None))
         elif t == "B":
-            start.append(0.0); bounds.append((None, None))
+            start.append(1.0 if (j, i) in spec.hoc_edges else 0.0); bounds.append((None, None))
         elif t == "P":
-            marker = spec.inds.index(model.measurement[spec.lvs[i]][0])
+            marker = spec.marker[i]
             v = 0.5 * s[marker, marker]
             if i == j:
                 start.append(v); bounds.append((1e-8, None))
@@ -189,13 +217,18 @@ def fit_cbsem(data: pd.DataFrame, model: Model, cfa: bool = False, max_iter: int
                        index=[lbl for *_, lbl in spec.params])
 
     std_lam = lam * sd_eta[None, :] / sd_x[:, None]
-    idx = pd.MultiIndex.from_tuples([(lv, ind) for lv in spec.lvs for ind in model.measurement[lv]],
+    idx = pd.MultiIndex.from_tuples([(lv, ind) for lv in spec.lvs for ind in model.measurement.get(lv, [])],
                                     names=["latent", "indicator"])
     loadings = pd.Series([std_lam[spec.inds.index(ind), spec.lvs.index(lv)] for lv, ind in idx], index=idx)
     std_b = (b * sd_eta[None, :] / sd_eta[:, None]).T  # [source, cible]
+    hoc_load = pd.Series({f"{spec.lvs[h]} -> {spec.lvs[c]}": std_b[h, c] for h, c in sorted(spec.hoc_edges)},
+                         dtype=float)
+    for h, c in spec.hoc_edges:
+        std_b[h, c] = 0.0   # relation de mesure, rapportée à part
     paths = pd.DataFrame(std_b, index=spec.lvs, columns=spec.lvs)
     lat_corr = pd.DataFrame(cov_eta / np.outer(sd_eta, sd_eta), index=spec.lvs, columns=spec.lvs)
-    r2 = {spec.lvs[j]: 1 - psi[j, j] / cov_eta[j, j] for j in range(spec.k) if j not in spec.exo}
+    locs = {c for _, c in spec.hoc_edges}
+    r2 = {spec.lvs[j]: 1 - psi[j, j] / cov_eta[j, j] for j in range(spec.k) if j not in spec.exo and j not in locs}
 
     # indices d'ajustement
     chi2 = n * fmin
@@ -228,5 +261,5 @@ def fit_cbsem(data: pd.DataFrame, model: Model, cfa: bool = False, max_iter: int
     })
     return CBSEMResult(model=model, estimates=est, loadings=loadings, path_coefficients=paths,
                        latent_correlations=lat_corr, r_squared=pd.Series(r2, dtype=float), fit_indices=fit_idx,
-                       residuals=pd.DataFrame(resid, index=spec.inds, columns=spec.inds),
+                       residuals=pd.DataFrame(resid, index=spec.inds, columns=spec.inds), higher_order_loadings=hoc_load,
                        converged=converged, n=n)

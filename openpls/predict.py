@@ -81,6 +81,8 @@ def _fold_predictions(train: pd.DataFrame, test: pd.DataFrame, model: Model, app
 def _cv_predictions(data, model, k, repetitions, seed, approach, **fit_kwargs):
     if model.interactions:
         raise ValueError("PLSpredict n'est pas disponible pour les modèles avec interaction")
+    if model.higher_order:
+        raise ValueError("PLSpredict n'est pas disponible pour les modèles d'ordre supérieur")
     if not model.endogenous():
         raise ValueError("Le modèle n'a pas de variable latente endogène")
     n = len(data)

@@ -54,6 +54,9 @@ def _em(y: np.ndarray, eqs, s: int, post: np.ndarray, max_iter: int, tol: float)
 def fimix(res, segments=range(1, 5), starts: int = 10, max_iter: int = 5000, tol: float = 1e-7,
           seed: int | None = 42) -> dict:
     """Retourne {"criteria": un tableau par nombre de segments, "solutions": {S: détails}}."""
+    from .higher_order import structural_view
+
+    res = structural_view(res)
     model = res.model
     eqs = _equations(model)
     if not eqs:

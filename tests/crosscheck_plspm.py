@@ -2,7 +2,6 @@
 
 python tests/crosscheck_plspm.py
 """
-import numpy as np
 import pandas as pd
 import plspm.config as c
 from plspm.mode import Mode

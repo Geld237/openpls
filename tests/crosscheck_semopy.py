@@ -4,8 +4,6 @@ semopy exige pandas<3 : à lancer dans un environnement séparé où openpls est
     python -m venv /tmp/semv && /tmp/semv/bin/pip install semopy "pandas<3" scipy
     PYTHONPATH=. /tmp/semv/bin/python tests/crosscheck_semopy.py
 """
-import numpy as np
-import pandas as pd
 import semopy
 
 from openpls import Model
@@ -35,3 +33,32 @@ for _, r in ins.iterrows():
         print(f"{key:<16} semopy {r.Estimate: .4f}  OpenPLS {ours.estimates.loc[key, 'estimate']: .4f}")
 print(f"écart maximal : {worst:.2e}")
 assert worst < 2e-3 and abs(chi2_ref - ours.fit_indices["chi2"]) < 1e-2
+
+
+# ---------------------------------------------------------------- second ordre (SEM et CFA)
+from openpls.simulate import simulate_higher_order
+
+HOC = """X =~ x_1 + x_2 + x_3
+L1 =~ l1_1 + l1_2 + l1_3
+L2 =~ l2_1 + l2_2 + l2_3
+L3 =~ l3_1 + l3_2 + l3_3
+Y =~ y_1 + y_2 + y_3
+HOC =~ L1 + L2 + L3
+"""
+d2 = simulate_higher_order(800, seed=7)
+for cfa, extra in ((False, "HOC ~ X\nY ~ HOC"), (True, "HOC ~~ X\nHOC ~~ Y\nX ~~ Y")):
+    ours = fit_cbsem(d2, Model.from_syntax(HOC + "HOC ~ X\nY ~ HOC"), cfa=cfa)
+    ref = semopy.Model(HOC + extra)
+    ref.fit(d2, obj="MLW")
+    chi2_ref = semopy.calc_stats(ref).T.loc["chi2", "Value"]
+    worst = 0.0
+    children = set(d2.columns) | {"L1", "L2", "L3"}
+    for _, r in ref.inspect().iterrows():
+        if r.op != "~":
+            continue
+        key = f"{r.rval} =~ {r.lval}" if r.lval in children else f"{r.lval} ~ {r.rval}"
+        if key in ours.estimates.index:
+            worst = max(worst, abs(r.Estimate - ours.estimates.loc[key, "estimate"]))
+    label = "CFA 2nd ordre" if cfa else "SEM 2nd ordre"
+    print(f"{label} : chi2 OpenPLS {ours.fit_indices['chi2']:.4f}  semopy {chi2_ref:.4f}  écart max {worst:.1e}")
+    assert worst < 2e-3 and abs(chi2_ref - ours.fit_indices["chi2"]) < 1e-2

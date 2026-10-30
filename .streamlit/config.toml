@@ -1,3 +1,6 @@
+[server]
+address = "localhost"
+
 [client]
 toolbarMode = "minimal"
 

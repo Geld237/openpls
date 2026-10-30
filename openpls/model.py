@@ -14,16 +14,40 @@ class Model:
     structural  : [(source, cible), ...]  — chemins entre variables latentes
     modes       : {variable_latente: "A" | "B"}  — A = réflectif, B = formatif (défaut A)
     interactions: [(X, M, cible), ...]  — effets de modération X × M -> cible
+    higher_order: {construit_ordre_sup: [composantes d'ordre 1]}  — modèles de second ordre
     """
 
     measurement: dict[str, list[str]]
     structural: list[tuple[str, str]]
     modes: dict[str, str] = field(default_factory=dict)
     interactions: list[tuple[str, str, str]] = field(default_factory=list)
+    higher_order: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        self.latents: list[str] = list(self.measurement)
+        self.latents: list[str] = list(self.measurement) + [h for h in self.higher_order if h not in self.measurement]
         idx = {lv: i for i, lv in enumerate(self.latents)}
+        owner: dict[str, str] = {}
+        for hoc, locs in self.higher_order.items():
+            if hoc in self.measurement:
+                raise ValueError(f"{hoc} ne peut pas avoir à la fois des indicateurs et des composantes")
+            if len(locs) < 2:
+                raise ValueError(f"Le construit d'ordre supérieur {hoc} doit avoir au moins 2 composantes")
+            for loc in locs:
+                if loc not in self.measurement:
+                    raise ValueError(f"{hoc} : la composante {loc} doit être une variable latente d'ordre 1 "
+                                     "(les modèles de troisième ordre ne sont pas pris en charge)")
+                if loc in owner:
+                    raise ValueError(f"{loc} est composante de deux construits ({owner[loc]} et {hoc})")
+                owner[loc] = hoc
+        for src, dst in self.structural:
+            for lv in (src, dst):
+                if lv in owner:
+                    raise ValueError(f"Chemin {src} -> {dst} : {lv} est une composante de {owner[lv]} ; "
+                                     f"relie plutôt {owner[lv]} aux autres construits")
+        for a, b, dst in self.interactions:
+            if any(lv in self.higher_order or lv in owner for lv in (a, b, dst)):
+                raise ValueError("Les interactions impliquant un construit d'ordre supérieur ou ses composantes "
+                                 "ne sont pas prises en charge")
         for src, dst in self.structural:
             if src not in idx or dst not in idx:
                 raise ValueError(f"Chemin {src} -> {dst} : variable latente inconnue")
@@ -34,7 +58,7 @@ class Model:
             if mode not in ("A", "B"):
                 raise ValueError(f"Mode inconnu pour {lv} : {mode}")
             self.modes[lv] = mode
-            if not self.measurement[lv]:
+            if lv in self.measurement and not self.measurement[lv]:
                 raise ValueError(f"{lv} n'a aucun indicateur")
 
         for a, b, dst in self.interactions:
@@ -71,8 +95,9 @@ class Model:
             Satisfaction ~  Image + Prix           # chemins structurels
             Fidelite     ~  Satisfaction + Prix + Satisfaction:Prix   # modération
         """
-        measurement: dict[str, list[str]] = {}
+        blocks: dict[str, list[str]] = {}
         modes: dict[str, str] = {}
+        lines_of: dict[str, int] = {}
         structural: list[tuple[str, str]] = []
         interactions: list[tuple[str, str, str]] = []
         for no, raw in enumerate(text.splitlines(), 1):
@@ -89,10 +114,11 @@ class Model:
             if not lhs or not terms or not lhs.replace("_", "").replace(".", "").isalnum():
                 raise ValueError(f"Ligne {no} : syntaxe invalide : {raw!r}")
             if mode:
-                if lhs in measurement:
+                if lhs in blocks:
                     raise ValueError(f"Ligne {no} : {lhs} est déjà défini")
-                measurement[lhs] = terms
+                blocks[lhs] = terms
                 modes[lhs] = mode
+                lines_of[lhs] = no
             else:
                 for t in terms:
                     if ":" in t:
@@ -102,16 +128,27 @@ class Model:
                         interactions.append((parts[0], parts[1], lhs))
                     else:
                         structural.append((t, lhs))
-        if not measurement:
+        if not blocks:
             raise ValueError("Aucune variable latente définie (utilise =~ ou <~)")
-        return cls(measurement, structural, modes, interactions)
+        # un bloc dont les termes sont tous des variables latentes = construit d'ordre supérieur
+        measurement, higher = {}, {}
+        for lv, terms in blocks.items():
+            n_lat = sum(t in blocks for t in terms)
+            if n_lat == len(terms):
+                higher[lv] = terms
+            elif n_lat:
+                raise ValueError(f"Ligne {lines_of[lv]} : {lv} mélange indicateurs et variables latentes")
+            else:
+                measurement[lv] = terms
+        return cls(measurement, structural, modes, interactions, higher)
 
     def to_syntax(self) -> str:
         lines = ["# Modèle de mesure"]
         width = max(len(lv) for lv in self.latents)
         for lv in self.latents:
             op = "=~" if self.modes[lv] == "A" else "<~"
-            lines.append(f"{lv:<{width}} {op} " + " + ".join(self.measurement[lv]))
+            terms = self.measurement[lv] if lv in self.measurement else self.higher_order[lv]
+            lines.append(f"{lv:<{width}} {op} " + " + ".join(terms))
         lines.append("\n# Modèle structurel")
         for j, lv in enumerate(self.latents):
             pred = self.predecessors(j)
@@ -121,11 +158,15 @@ class Model:
         return "\n".join(lines)
 
     def without_interactions(self) -> "Model":
-        return Model(self.measurement, list(self.structural), dict(self.modes))
+        return Model(self.measurement, list(self.structural), dict(self.modes), [], dict(self.higher_order))
+
+    def components(self) -> dict[str, str]:
+        """{composante: construit d'ordre supérieur}."""
+        return {loc: hoc for hoc, locs in self.higher_order.items() for loc in locs}
 
     @property
     def indicators(self) -> list[str]:
-        return [ind for lv in self.latents for ind in self.measurement[lv]]
+        return [ind for lv in self.latents for ind in self.measurement.get(lv, [])]
 
     def predecessors(self, j: int) -> np.ndarray:
         return np.flatnonzero(self.path[:, j])

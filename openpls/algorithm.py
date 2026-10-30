@@ -43,6 +43,7 @@ class PLSResult:
     spec: Model | None = None          # modèle tel que spécifié (avec interactions) si différent de `model`
     stage1: "PLSResult | None" = None  # modération en deux étapes : estimation sans interaction
     moderation: str | None = None
+    hoc_method: str | None = None      # approche d'ordre supérieur utilisée
 
     @property
     def measurement_result(self) -> "PLSResult":
@@ -103,13 +104,21 @@ def fit(
     tol: float = 1e-7,
     consistent: bool = False,
     moderation: str = "two_stage",
+    hoc_method: str = "two_stage_disjoint",
 ) -> PLSResult:
     """Estime un modèle PLS-SEM sur `data` (un indicateur par colonne).
 
     consistent=True active PLSc (Dijkstra & Henseler 2015) : corrige l'atténuation
     des blocs réflectifs pour estimer des modèles de facteurs communs.
     moderation : méthode pour les termes d'interaction X:M — "two_stage" (défaut),
-    "product_indicator" ou "orthogonal" (voir openpls.moderation)."""
+    "product_indicator" ou "orthogonal" (voir openpls.moderation).
+    hoc_method : approche pour les construits d'ordre supérieur — "two_stage_disjoint" (défaut),
+    "two_stage_embedded" ou "repeated_indicators" (voir openpls.higher_order)."""
+    if model.higher_order:
+        from .higher_order import fit_higher_order
+
+        return fit_higher_order(data, model, method=hoc_method, scheme=scheme, max_iter=max_iter,
+                                tol=tol, consistent=consistent)
     if model.interactions:
         from .moderation import fit_moderated
 
@@ -122,7 +131,15 @@ def _fit_plain(data, model, scheme="path", max_iter=300, tol=1e-7, consistent=Fa
     missing = [c for c in model.indicators if c not in data.columns]
     if missing:
         raise KeyError(f"Indicateurs absents des données : {missing}")
-    raw = data[model.indicators].to_numpy(dtype=float)
+    sub = data[model.indicators]
+    if all(pd.api.types.is_numeric_dtype(t) for t in sub.dtypes):  # cas courant : aucune conversion
+        raw = sub.to_numpy(dtype=float)
+    else:
+        conv = sub.apply(pd.to_numeric, errors="coerce")
+        non_num = [c for c in sub.columns if (conv[c].isna() & sub[c].notna()).any()]
+        if non_num:
+            raise ValueError(f"Valeurs non numériques dans : {', '.join(map(str, non_num))}")
+        raw = conv.to_numpy(dtype=float)
     if np.isnan(raw).any():
         raise ValueError("Valeurs manquantes : traite-les avant l'estimation")
     x = _standardize(raw)
@@ -166,9 +183,8 @@ def _fit_plain(data, model, scheme="path", max_iter=300, tol=1e-7, consistent=Fa
         [(lv, ind) for lv in model.latents for ind in model.measurement[lv]], names=["latent", "indicator"]
     )
     w_flat = np.concatenate(weights)
-    loadings = np.concatenate(
-        [[np.corrcoef(x[:, c], y[:, j])[0, 1] for c in range(b.start, b.stop)] for j, b in enumerate(blocks)]
-    )
+    # x et y sont centrés-réduits (ddof=1) : la corrélation est un simple produit scalaire
+    loadings = np.concatenate([x[:, b].T @ y[:, j] / (n - 1) for j, b in enumerate(blocks)])
 
     # rho_A de Dijkstra & Henseler (2015) : fiabilité de chaque composite
     rho_a = np.ones(k)

@@ -67,6 +67,9 @@ def nca(res, target: str, n_perm: int = 1000, seed: int | None = 42, scores: pd.
 
     `scores` : par défaut les scores standardisés de res ; on peut passer les scores 0-100 de l'IPMA
     (identique pour d et le tableau des goulots, qui sont invariants d'échelle)."""
+    from .higher_order import structural_view
+
+    res = structural_view(res)
     model = res.model
     if target not in model.latents:
         raise KeyError(f"Latente inconnue : {target}")

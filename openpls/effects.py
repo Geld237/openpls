@@ -17,7 +17,15 @@ def _b(res) -> np.ndarray:
     return res.path_coefficients.to_numpy()
 
 
+def _view(res):
+    """Exclut les relations HOC <-> composantes (mesure) des effets structurels."""
+    from .higher_order import structural_view
+
+    return structural_view(res)
+
+
 def total_effects(res) -> pd.DataFrame:
+    res = _view(res)
     b = _b(res)
     k = b.shape[0]
     t = np.linalg.inv(np.eye(k) - b) - np.eye(k)
@@ -26,6 +34,7 @@ def total_effects(res) -> pd.DataFrame:
 
 
 def total_indirect_effects(res) -> pd.DataFrame:
+    res = _view(res)
     return total_effects(res) - res.path_coefficients
 
 
@@ -46,6 +55,7 @@ def mediation_paths(model, min_len: int = 2) -> list[list[int]]:
 
 
 def specific_indirect_effects(res) -> pd.Series:
+    res = _view(res)
     b = _b(res)
     lvs = res.model.latents
     vals = {}
@@ -56,6 +66,7 @@ def specific_indirect_effects(res) -> pd.Series:
 
 def effect_statistics(res) -> pd.Series:
     """Toutes les quantités qu'on veut bootstrapper, dans une seule série plate."""
+    res = _view(res)
     m = res.model
     lvs = m.latents
     b = res.path_coefficients

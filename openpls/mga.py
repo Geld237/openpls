@@ -1,5 +1,7 @@
 """Analyse multigroupe (MGA) et invariance de mesure (MICOM).
 
+`mga` compare deux groupes ; `mga_multi` en compare k ≥ 2 (omnibus + paires corrigées par Holm).
+
 MGA — compare les coefficients de chemin de deux groupes :
   * test de permutation (Chin & Dibbern 2010) : on permute les étiquettes de groupe ;
   * PLS-MGA de Henseler (2009) : comparaison de toutes les paires de tirages bootstrap ;
@@ -28,6 +30,9 @@ from .model import Model
 
 
 def _paths(res) -> pd.Series:
+    from .higher_order import structural_view
+
+    res = structural_view(res)
     m = res.model
     return pd.Series([res.path_coefficients.loc[s, d] for s, d in m.structural],
                      index=[f"{s} -> {d}" for s, d in m.structural])
@@ -59,10 +64,6 @@ def _corr(a, b) -> float:
     return float(np.corrcoef(a, b)[0, 1])
 
 
-def _weights_by_lv(res, lvs):
-    return {lv: res.outer_weights[lv] for lv in lvs}
-
-
 def mga(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: int = 1000,
         seed: int | None = 42, statistic: Callable = _paths, progress=None, **fit_kwargs) -> dict:
     """Analyse multigroupe complète, MICOM inclus.
@@ -78,11 +79,14 @@ def mga(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: in
     r1, r2 = fit(d1, model, **fit_kwargs), fit(d2, model, **fit_kwargs)
     pooled = fit(data, model, **fit_kwargs)
     meas_model = pooled.model if pooled.stage1 is None else pooled.stage1.model
-    lvs = [lv for lv in meas_model.latents if ":" not in lv]
+    hoc = set(model.higher_order)
+    # MICOM porte sur les composites d'ordre 1 mesurés par des colonnes des données
+    lvs = [lv for lv in meas_model.latents if ":" not in lv and lv not in hoc
+           and all(c in data.columns for c in meas_model.measurement[lv])]
     m1 = r1.measurement_result.outer_weights
     m2 = r2.measurement_result.outer_weights
     mp = pooled.measurement_result.outer_weights
-    cols = meas_model.indicators
+    cols = list(dict.fromkeys(c for lv in lvs for c in meas_model.measurement[lv]))
     xz = _std(data[cols])
 
     s1, s2 = statistic(r1), statistic(r2)
@@ -196,10 +200,121 @@ def mga(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: in
         verdict = f"pas d'invariance compositionnelle pour {bad} : interpréter la MGA avec prudence"
 
     return {
+        "invariant": bool(step2["invariance compositionnelle"].all()),
         "groups": pd.Series({lbl1: n1, lbl2: n2}, name="n"),
         "comparison": comparison,
         "micom_step2": step2,
         "micom_step3": step3_tbl,
         "verdict": verdict,
         "n_perm_ok": len(perm_diff), "n_perm_failed": fails,
+    }
+
+
+# ---------------------------------------------------------------- plus de deux groupes
+def holm(p: np.ndarray) -> np.ndarray:
+    """Correction de Holm-Bonferroni (contrôle du taux d'erreur familial)."""
+    p = np.asarray(p, float)
+    order = np.argsort(p)
+    m = len(p)
+    adj = np.empty(m)
+    running = 0.0
+    for rank, i in enumerate(order):
+        running = max(running, (m - rank) * p[i])
+        adj[i] = min(running, 1.0)
+    return adj
+
+
+def mga_multi(data: pd.DataFrame, model: Model, groups, n_perm: int = 1000, n_boot: int = 500,
+              seed: int | None = 42, statistic: Callable = _paths, progress=None, **fit_kwargs) -> dict:
+    """MGA pour k ≥ 2 groupes.
+
+    1. Test omnibus par permutation de l'égalité de chaque chemin entre TOUS les groupes :
+       statistique  Σ_g n_g (β_g - β̄)²  (β̄ = moyenne pondérée par les effectifs), comparée à
+       sa distribution quand les étiquettes de groupe sont permutées.
+    2. Comparaisons deux à deux avec `mga` (permutation, Henseler, Welch, MICOM) ; les p-values
+       de permutation sont corrigées par Holm pour chaque chemin, sur l'ensemble des paires.
+    Bonne pratique : n'interpréter les paires que pour les chemins dont l'omnibus est significatif.
+    """
+    from itertools import combinations
+
+    from .algorithm import fit
+
+    g = pd.Series(np.asarray(groups), index=data.index)
+    if g.isna().any():
+        raise ValueError("La variable de groupe contient des valeurs manquantes")
+    levels = list(pd.unique(g))
+    if len(levels) < 2:
+        raise ValueError("Il faut au moins 2 groupes")
+    for lv in levels:
+        if (g == lv).sum() < 10:
+            raise ValueError(f"Le groupe {lv!r} a moins de 10 observations")
+    pairs = list(combinations(levels, 2))
+    total = n_perm + len(pairs) * (n_perm + 2 * n_boot)
+    done = [0]
+
+    def tick(k=1):
+        done[0] += k
+        if progress:
+            progress(min(done[0], total), total)
+
+    labels = g.to_numpy()
+    sizes = np.array([(labels == lv).sum() for lv in levels], float)
+
+    def group_stats(lab):
+        est = [statistic(fit(data[lab == lv], model, **fit_kwargs)) for lv in levels]
+        return pd.concat(est, axis=1, keys=[str(lv) for lv in levels])
+
+    est = group_stats(labels)
+
+    def omni(e: pd.DataFrame) -> np.ndarray:
+        v = e.to_numpy()
+        mean = (v * sizes).sum(axis=1) / sizes.sum()
+        return ((v - mean[:, None]) ** 2 * sizes).sum(axis=1)
+
+    obs = omni(est)
+    rng = np.random.default_rng(seed)
+    perm, fails = [], 0
+    for _ in range(n_perm):
+        try:
+            perm.append(omni(group_stats(rng.permutation(labels)).reindex(est.index)))
+        except (ValueError, np.linalg.LinAlgError):
+            fails += 1
+        tick()
+    perm = np.array(perm)
+    if len(perm) < 20:
+        raise RuntimeError("Trop de permutations en échec")
+    p_omni = ((perm >= obs - 1e-12).sum(axis=0) + 1) / (len(perm) + 1)
+    omnibus = pd.DataFrame({"statistique": obs, "p_value": p_omni}, index=est.index)
+    omnibus["différence entre groupes (p<0,05)"] = omnibus["p_value"] < 0.05
+
+    rows, micom = [], {}
+    for k, (a, b) in enumerate(pairs):
+        mask = np.isin(labels, [a, b])
+        base = done[0]
+        out = mga(data[mask], model, labels[mask], n_perm=n_perm, n_boot=n_boot,
+                  seed=None if seed is None else seed + 101 * (k + 1), statistic=statistic,
+                  progress=(lambda i, n, base=base: progress(min(base + i, total), total)) if progress else None,
+                  **fit_kwargs)
+        done[0] = base + n_perm + 2 * n_boot
+        tick(0)
+        name = f"{a} vs {b}"
+        micom[name] = {"step2": out["micom_step2"], "step3": out["micom_step3"], "verdict": out["verdict"],
+                       "invariant": out["invariant"]}
+        c = out["comparison"]
+        for path, r in c.iterrows():
+            rows.append({"paire": name, "chemin": path, "difference": r["difference"],
+                         "p_permutation": r["p_permutation"], "p_henseler": r["p_henseler"], "p_welch": r["p_welch"]})
+    pw = pd.DataFrame(rows)
+    pw["p_perm_Holm"] = pw.groupby("chemin")["p_permutation"].transform(lambda s: holm(s.to_numpy()))
+    pw["différence significative (Holm, 5 %)"] = pw["p_perm_Holm"] < 0.05
+    pw = pw.set_index(["chemin", "paire"]).sort_index()
+
+    invariant = all(v["invariant"] for v in micom.values())
+    verdict = ("invariance au moins partielle pour toutes les paires : la comparaison est légitime" if invariant
+               else "invariance compositionnelle non établie pour au moins une paire : interpréter avec prudence")
+    return {
+        "invariant": invariant,
+        "groups": pd.Series({str(lv): int(n) for lv, n in zip(levels, sizes)}, name="n"),
+        "estimates": est, "omnibus": omnibus, "pairwise": pw, "micom": micom, "verdict": verdict,
+        "n_perm_ok": len(perm), "n_perm_failed": fails,
     }

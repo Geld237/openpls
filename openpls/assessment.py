@@ -6,8 +6,11 @@ import pandas as pd
 
 
 def _measured(res) -> list[str]:
-    """Latentes dont le modèle de mesure s'évalue (hors termes d'interaction X:M)."""
-    return [lv for lv in res.model.latents if ":" not in lv]
+    """Latentes dont le modèle de mesure s'évalue directement : hors termes d'interaction X:M
+    et hors construits d'ordre supérieur (évalués par openpls.higher_order)."""
+    spec = getattr(res, "spec", None)
+    hoc = set(spec.higher_order) if spec is not None else set()
+    return [lv for lv in res.model.latents if ":" not in lv and lv not in hoc]
 
 
 def quality_criteria(res) -> pd.DataFrame:
@@ -68,11 +71,15 @@ def f_squared(res, data, **fit_kwargs) -> pd.DataFrame:
     from .algorithm import fit
     from .model import Model
 
+    from .higher_order import structural_view
+
     spec = res.spec or res.model
-    if res.moderation and "moderation" not in fit_kwargs:
-        fit_kwargs = {**fit_kwargs, "moderation": res.moderation}
+    for attr, kw in (("moderation", "moderation"), ("hoc_method", "hoc_method")):
+        if getattr(res, attr, None) and kw not in fit_kwargs:
+            fit_kwargs = {**fit_kwargs, kw: getattr(res, attr)}
+    view = structural_view(res)
     rows = []
-    for src, dst in res.model.structural:
+    for src, dst in view.model.structural:
         if ":" in src:  # terme d'interaction : on retire seulement l'interaction
             structural = list(spec.structural)
             inter = [i for i in spec.interactions if not (f"{i[0]}:{i[1]}" == src and i[2] == dst)]
@@ -83,7 +90,8 @@ def f_squared(res, data, **fit_kwargs) -> pd.DataFrame:
         if not any(d == dst for _, d in structural) and not any(i[2] == dst for i in inter):
             r2_out = 0.0
         else:
-            sub = fit(data, Model(spec.measurement, structural, dict(spec.modes), inter), **fit_kwargs)
+            sub = fit(data, Model(spec.measurement, structural, dict(spec.modes), inter,
+                                  dict(spec.higher_order)), **fit_kwargs)
             r2_out = sub.r_squared[dst]
         rows.append({"path": f"{src} -> {dst}", "f2": (r2_in - r2_out) / (1 - r2_in)})
     return pd.DataFrame(rows).set_index("path")

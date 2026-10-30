@@ -105,7 +105,7 @@ def test_f2_with_isolated_latent_is_finite():
 # ------------------------------------------------------------------ analyses avancées et modération
 ADV_CASES = [
     ("Prédiction (PLSpredict, CVPAT)", {"pp_k": 5, "pp_r": 1}, "Lancer PLSpredict", "CVPAT"),
-    ("Multigroupe (MGA, MICOM)", {"mga_np": 100, "mga_nb": 100}, "Lancer MGA", "Comparaison des chemins"),
+    ("Multigroupe (MGA, MICOM)", {"mga_np": 100, "mga_nb": 100}, "Lancer MGA", "Test omnibus (tous les groupes)"),
     ("Importance-performance (IPMA)", {}, None, "Niveau indicateur"),
     ("Conditions nécessaires (NCA)", {"nca_np": 100}, "Lancer la NCA", "Tableau des goulots"),
     ("Endogénéité (copules)", {"endo_nb": 100}, "Lancer le test", "Synthèse"),
@@ -143,3 +143,37 @@ def test_app_moderation_and_mga_detects_group_difference():
     _btn(at, "bootstrap").click().run()
     assert "Pentes simples (modération)" in [s.value for s in at.subheader]
     assert not at.exception, at.exception
+
+
+def test_app_mga_two_groups():
+    at = _app().run()
+    _btn(at, "Estimer").click().run()
+    at.radio(key="adv_choice").set_value("Multigroupe (MGA, MICOM)").run()
+    at.multiselect(key="mga_lv").set_value(["A", "B"]).run()
+    at.number_input(key="mga_np").set_value(100)
+    at.number_input(key="mga_nb").set_value(100).run()
+    _btn(at, "Lancer MGA").click().run()
+    assert not at.exception, at.exception
+    assert "Comparaison des chemins" in [s.value for s in at.subheader]
+
+
+def test_app_higher_order_example():
+    at = _app().run()
+    at.sidebar.radio(key="source").set_value("Exemple de second ordre").run()
+    assert "QUALITE =~ L1 + L2 + L3" in at.text_area(key="syntax").value
+    for method in ("two_stage_disjoint", "repeated_indicators"):
+        at.sidebar.selectbox(key="hoc_method").set_value(method).run()
+        _btn(at, "Estimer").click().run()
+        assert not at.exception, at.exception
+        subs = [s.value for s in at.subheader]
+        assert "Construits d'ordre supérieur" in subs
+        paths = next(df.value for df in at.dataframe if df.value.index.name == "chemin")
+        assert set(paths.index) == {"X -> QUALITE", "QUALITE -> Y"}, paths.index
+    at.number_input(key="n_boot").set_value(100).run()
+    _btn(at, "bootstrap").click().run()
+    assert not at.exception, at.exception
+    assert "Chargements des composantes (ordre supérieur)" in [s.value for s in at.subheader]
+    at.radio(key="adv_choice").set_value("CB-SEM / CFA").run()
+    assert "Chargements de second ordre" in [s.value for s in at.subheader]
+    at.radio(key="adv_choice").set_value("Prédiction (PLSpredict, CVPAT)").run()
+    assert any("ordre supérieur" in w.value for w in at.warning)

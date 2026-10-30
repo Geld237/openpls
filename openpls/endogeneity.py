@@ -57,6 +57,9 @@ def gaussian_copula(res, target: str, n_boot: int = 1000, seed: int | None = 42,
 
     Retourne {"normality": Shapiro-Wilk des prédécesseurs, "models": tableau long des estimations,
     "summary": une ligne par copule et par modèle}."""
+    from .higher_order import structural_view
+
+    res = structural_view(res)
     model = res.model
     if target not in model.latents:
         raise KeyError(f"Latente inconnue : {target}")

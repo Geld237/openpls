@@ -13,8 +13,9 @@ from openpls import Model, fit, bootstrap_statistics, quality_criteria, htmt, fo
 from openpls.effects import classify_mediation, effect_statistics, total_effects, specific_indirect_effects
 from openpls.editor import model_editor
 from openpls.gui_helpers import guess_syntax, model_to_dot, prepare_data, to_excel
+from openpls.higher_order import higher_order_measurement, higher_order_statistics, structural_view
 from openpls.moderation import simple_slopes, simple_slope_statistics
-from openpls.simulate import simulate
+from openpls.simulate import simulate, simulate_higher_order
 
 st.set_page_config(page_title="OpenPLS", page_icon="◎", layout="wide")
 
@@ -27,6 +28,20 @@ ETA2 =~ eta2_1 + eta2_2 + eta2_3
 # Modèle structurel  ( cible ~ source1 + source2 ;  X:M = modération )
 ETA1 ~ XI1 + XI2
 ETA2 ~ ETA1 + XI1
+"""
+HOC_SYNTAX = """# Modèle de mesure (ordre 1)
+X  =~ x_1 + x_2 + x_3
+L1 =~ l1_1 + l1_2 + l1_3
+L2 =~ l2_1 + l2_2 + l2_3
+L3 =~ l3_1 + l3_2 + l3_3
+Y  =~ y_1 + y_2 + y_3
+
+# Construit de second ordre : ses termes sont des variables latentes
+QUALITE =~ L1 + L2 + L3
+
+# Modèle structurel
+QUALITE ~ X
+Y ~ QUALITE
 """
 SERIES = ["#2a78d6", "#eb6834", "#1baf7a"]  # 3 premières teintes catégorielles validées (daltonisme)
 RED = "color:#C0392B;font-weight:600"
@@ -72,11 +87,11 @@ def read_file(content: bytes, name: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def example_data() -> pd.DataFrame:
-    """400 répondants, deux groupes dont le chemin ETA1 -> ETA2 diffère (0,6 vs 0,3)."""
-    a = simulate(200, seed=11, direct=0.15)
-    b = simulate(200, seed=12, direct=0.15, eta_path=0.3)
-    d = pd.concat([a, b], ignore_index=True)
-    d.insert(0, "groupe", ["A"] * 200 + ["B"] * 200)
+    """450 répondants, trois groupes ; le chemin ETA1 -> ETA2 vaut 0,6 dans A et C, 0,3 dans B."""
+    parts = [simulate(150, seed=11, direct=0.15), simulate(150, seed=12, direct=0.15, eta_path=0.3),
+             simulate(150, seed=13, direct=0.15)]
+    d = pd.concat(parts, ignore_index=True)
+    d.insert(0, "groupe", ["A"] * 150 + ["B"] * 150 + ["C"] * 150)
     return d
 
 
@@ -99,7 +114,8 @@ st.sidebar.title("◎ OpenPLS")
 st.sidebar.caption("PLS-SEM libre et open source")
 
 st.sidebar.header("1. Données")
-source = st.sidebar.radio("Source", ["Données d'exemple", "Importer un fichier"], key="source")
+source = st.sidebar.radio("Source", ["Données d'exemple", "Exemple de second ordre", "Importer un fichier"],
+                          key="source")
 if source == "Importer un fichier":
     up = st.sidebar.file_uploader("CSV ou Excel", type=["csv", "txt", "xlsx", "xls"])
     if up is None:
@@ -108,6 +124,9 @@ if source == "Importer un fichier":
         st.stop()
     raw = read_file(up.getvalue(), up.name)
     data_id = f"file:{up.name}:{len(raw)}"
+elif source == "Exemple de second ordre":
+    raw = simulate_higher_order(400, seed=21)
+    data_id = "example_hoc"
 else:
     raw = example_data()
     data_id = "example"
@@ -121,17 +140,25 @@ moderation = st.sidebar.selectbox(
     format_func={"two_stage": "Deux étapes (recommandé)", "product_indicator": "Produit des indicateurs",
                  "orthogonal": "Orthogonalisation"}.get,
     help="Utilisée seulement si le modèle contient un terme d'interaction `X:M`.")
+hoc_method = st.sidebar.selectbox(
+    "Approche d'ordre supérieur", ["two_stage_disjoint", "two_stage_embedded", "repeated_indicators"],
+    key="hoc_method",
+    format_func={"two_stage_disjoint": "Deux étapes, disjointe (recommandé)",
+                 "two_stage_embedded": "Deux étapes, intégrée", "repeated_indicators": "Indicateurs répétés"}.get,
+    help="Utilisée seulement si le modèle contient un construit d'ordre supérieur (`HOC =~ LV1 + LV2`).")
 n_boot = st.sidebar.number_input("Échantillons bootstrap", 100, 20000, 1000, step=500, key="n_boot")
 alpha = st.sidebar.selectbox("Seuil de significativité", [0.05, 0.01, 0.10], key="alpha")
 seed = int(st.sidebar.number_input("Graine aléatoire", 0, 10**6, 42, key="seed"))
 
 # ---------------------------------------------------------------- définition du modèle
 st.title("Modèle")
+raw = raw.rename(columns=str)  # en-têtes numériques (fréquents dans Excel) -> texte, comme dans la syntaxe
 numeric_cols = [c for c in raw.columns if pd.api.types.is_numeric_dtype(raw[c])]
 if st.session_state.get("data_id") != data_id:
     st.session_state["data_id"] = data_id
-    st.session_state["syntax"] = EXAMPLE_SYNTAX if data_id == "example" else guess_syntax(numeric_cols)
-    for k in ("results", "boot", "adv", "editor_pos", "editor_nonce"):
+    st.session_state["syntax"] = {"example": EXAMPLE_SYNTAX, "example_hoc": HOC_SYNTAX}.get(
+        data_id, guess_syntax(numeric_cols) if data_id.startswith("file:") else EXAMPLE_SYNTAX)
+    for k in ("results", "boot", "adv", "editor_pos"):
         st.session_state.pop(k, None)
 
 with st.expander(f"Aperçu des données — {raw.shape[0]} lignes × {raw.shape[1]} colonnes"):
@@ -141,10 +168,15 @@ with st.expander(f"Aperçu des données — {raw.shape[0]} lignes × {raw.shape[
 tab_editor, tab_syntax = st.tabs(["Éditeur visuel", "Syntaxe"])
 with tab_editor:
     st.caption("Glisse les indicateurs sur le canevas · tire la poignée bleue d'une variable vers une autre pour "
-               "créer un chemin · clique un chemin pour ajouter un modérateur · puis « Appliquer au modèle ».")
-    out = model_editor(numeric_cols, st.session_state["syntax"], st.session_state.get("editor_pos"))
-    if out and out.get("nonce") != st.session_state.get("editor_nonce"):
-        st.session_state["editor_nonce"] = out["nonce"]
+               "créer un chemin · clique un chemin pour ajouter un modérateur · pour un construit d'ordre supérieur, "
+               "crée une variable vide puis « + Composante » · enfin « Appliquer au modèle ».")
+    # une instance d'éditeur par jeu de données : sa dernière valeur ne doit jamais être réappliquée
+    # à d'autres données (elle porterait l'ancienne syntaxe)
+    out = model_editor(numeric_cols, st.session_state["syntax"], st.session_state.get("editor_pos"),
+                       key=f"editor:{data_id}")
+    applied = st.session_state.setdefault("editor_applied", set())
+    if out and out.get("nonce") not in applied:
+        applied.add(out["nonce"])
         st.session_state["editor_pos"] = {k: tuple(v) for k, v in out.get("positions", {}).items()}
         st.session_state["syntax"] = out["syntax"]
 
@@ -153,7 +185,8 @@ with tab_syntax:
     with left:
         st.text_area("Syntaxe du modèle", key="syntax", height=320,
                      help="`LATENTE =~ ind1 + ind2` (réflectif) · `LATENTE <~ ind1 + ind2` (formatif) · "
-                          "`CIBLE ~ SOURCE1 + SOURCE2` (chemins) · `CIBLE ~ X + M + X:M` (modération). "
+                          "`CIBLE ~ SOURCE1 + SOURCE2` (chemins) · `CIBLE ~ X + M + X:M` (modération) · "
+                          "`HOC =~ LV1 + LV2` (ordre supérieur : les termes sont des variables latentes). "
                           "`#` pour les commentaires.")
 
 try:
@@ -169,6 +202,8 @@ except (ValueError, KeyError) as e:
 fit_kwargs = dict(scheme=scheme, consistent=algo.startswith("PLSc"))
 if model is not None and model.interactions:
     fit_kwargs["moderation"] = moderation
+if model is not None and model.higher_order:
+    fit_kwargs["hoc_method"] = hoc_method
 
 if model_error:
     st.error(model_error)
@@ -202,7 +237,8 @@ if res is None:
 st.title("Résultats")
 conv_res = res.measurement_result  # en deux étapes : l'itératif PLS est celui de l'étape 1
 status = "convergé" if res.converged and conv_res.converged else "NON convergé"
-mod_txt = f" · modération : {res.moderation}" if res.moderation else ""
+mod_txt = (f" · modération : {res.moderation}" if res.moderation else "") + (
+    f" · ordre supérieur : {res.hoc_method}" if res.hoc_method else "")
 st.caption(f"{'PLSc' if res.consistent else 'PLS'} · schéma {scheme} · {status} en {conv_res.iterations} itérations · "
            f"n = {len(data)}{mod_txt}")
 if status != "convergé":
@@ -211,14 +247,17 @@ with st.expander("Diagramme estimé", expanded=False):
     st.graphviz_chart(model_to_dot(model, res), width="stretch")
 
 meas = res.measurement_result
+sres = structural_view(res)  # sans les relations HOC <-> composantes (indicateurs répétés)
 q = quality_criteria(meas)
 paths_tbl = pd.DataFrame(
-    [{"chemin": f"{s} -> {d}", "coefficient": res.path_coefficients.loc[s, d]} for s, d in res.model.structural]
+    [{"chemin": f"{s} -> {d}", "coefficient": res.path_coefficients.loc[s, d]} for s, d in sres.model.structural]
 ).set_index("chemin")
 loadings_tbl = pd.DataFrame({"chargement": meas.outer_loadings, "poids": meas.outer_weights})
+loadings_tbl = loadings_tbl[~loadings_tbl.index.get_level_values(0).isin(list(model.higher_order))]
 htmt_tbl = htmt(meas)
 fl_tbl = fornell_larcker(meas)
-endogenous = list(res.r_squared.index)
+endogenous = list(sres.r_squared.index)
+hoc_eval = higher_order_measurement(res) if model.higher_order else None
 excel_extra: dict[str, pd.DataFrame] = {}
 
 tabs = st.tabs(["Modèle structurel", "Modèle de mesure", "Validité discriminante",
@@ -230,7 +269,7 @@ with tabs[0]:
         st.subheader("Coefficients de chemin")
         st.dataframe(fmt(paths_tbl), width="stretch")
         st.subheader("R²")
-        st.dataframe(fmt(res.r_squared.rename("R²").to_frame()), width="stretch")
+        st.dataframe(fmt(sres.r_squared.rename("R²").to_frame()), width="stretch")
     with c2:
         st.subheader("Taille d'effet f²")
         try:
@@ -270,9 +309,12 @@ with tabs[0]:
                 st.altair_chart(ch, width="stretch")
 
 with tabs[1]:
-    if res.stage1 is not None:
+    if res.stage1 is not None and res.moderation:
         st.info("Modération en deux étapes : le modèle de mesure est évalué sur l'estimation de l'étape 1 "
                 "(modèle sans interaction).")
+    if res.stage1 is not None and res.hoc_method:
+        st.info("Ordre supérieur en deux étapes : les construits d'ordre 1 (dont les composantes) sont évalués "
+                "sur l'étape 1 ; les construits d'ordre supérieur, dans le tableau dédié plus bas.")
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Chargements et poids externes")
@@ -285,6 +327,18 @@ with tabs[1]:
                      width="stretch")
         st.caption("Seuils : α, ρ_A, ρ_c ≥ 0,70 (ρ_c ≤ 0,95) · AVE ≥ 0,50. "
                    "Ces critères ne s'appliquent qu'aux construits réflectifs.")
+    if hoc_eval is not None:
+        st.subheader("Construits d'ordre supérieur")
+        c1, c2 = st.columns([3, 2])
+        with c1:
+            st.dataframe(flag(hoc_eval["components"], {"chargement": lambda v: v < 0.708, "VIF": lambda v: v > 5}),
+                         width="stretch")
+            st.caption("Les composantes jouent le rôle d'indicateurs du construit d'ordre supérieur : chargements "
+                       "(réflectif) ou poids et VIF (formatif). Rouge : chargement < 0,708 ou VIF > 5.")
+        with c2:
+            st.dataframe(flag(hoc_eval["quality"], {"cronbach_alpha": lambda v: v < 0.7, "rho_c": lambda v: v < 0.7,
+                                                    "AVE": lambda v: v < 0.5, "VIF max": lambda v: v > 5}),
+                         width="stretch")
 
 with tabs[2]:
     c1, c2 = st.columns(2)
@@ -302,8 +356,12 @@ with tabs[3]:
              "Peut prendre de quelques secondes à quelques minutes.")
 
     def boot_stats(r):
-        s = effect_statistics(r)
-        return pd.concat([s, simple_slope_statistics(r)]) if r.spec is not None and r.spec.interactions else s
+        parts = [effect_statistics(r)]
+        if r.spec is not None and r.spec.interactions:
+            parts.append(simple_slope_statistics(r))
+        if r.spec is not None and r.spec.higher_order:
+            parts.append(higher_order_statistics(r))
+        return pd.concat(parts)
 
     if st.button("▶  Lancer le bootstrap", key="run_boot"):
         bar = st.progress(0.0, text="Bootstrap…")
@@ -326,7 +384,9 @@ with tabs[3]:
         boot_view = boot.assign(significatif=sig.map({True: "oui", False: "non"}))
         labels = {"direct": "Effets directs (coefficients de chemin)", "specific_indirect": "Effets indirects spécifiques",
                   "total_indirect": "Effets indirects totaux", "total": "Effets totaux",
-                  "simple_slope": "Pentes simples (modération)"}
+                  "simple_slope": "Pentes simples (modération)",
+                  "hoc_loading": "Chargements des composantes (ordre supérieur)",
+                  "hoc_weight": "Poids des composantes (ordre supérieur)"}
         for kind, title in labels.items():
             if kind in boot_view.index.get_level_values(0):
                 st.subheader(title)
@@ -363,7 +423,8 @@ with tabs[3]:
 ADV = ["Prédiction (PLSpredict, CVPAT)", "Multigroupe (MGA, MICOM)", "Importance-performance (IPMA)",
        "Conditions nécessaires (NCA)", "Endogénéité (copules)", "CB-SEM / CFA", "Segmentation (FIMIX-PLS)"]
 base_key = (st.session_state["syntax"], tuple(sorted(fit_kwargs.items())), seed, len(data))
-plain = not model.interactions
+plain = not model.interactions and not model.higher_order
+plain_why = "avec interaction" if model.interactions else "d'ordre supérieur"
 
 with tabs[4]:
     choice = st.radio("Analyse", ADV, horizontal=True, key="adv_choice", label_visibility="collapsed")
@@ -373,7 +434,7 @@ with tabs[4]:
         st.markdown("Validation croisée à k plis répétée : le modèle prédit-il de **nouvelles** observations "
                     "mieux qu'une simple moyenne (Q²_predict > 0) et qu'une régression linéaire (LM) ?")
         if not plain:
-            st.warning("PLSpredict n'est pas disponible pour les modèles avec interaction.")
+            st.warning(f"PLSpredict n'est pas disponible pour les modèles {plain_why}.")
         else:
             c = st.columns(3)
             k = c[0].number_input("Plis (k)", 2, 50, 10, key="pp_k")
@@ -416,8 +477,9 @@ with tabs[4]:
                 excel_extra.update({"PLSpredict": pp["indicators"], "PLSpredict latentes": pp["latents"], "CVPAT": cv})
 
     elif choice == ADV[1]:
-        st.markdown("Compare les coefficients de chemin de **deux groupes**, après avoir vérifié l'invariance "
-                    "de mesure (MICOM).")
+        st.markdown("Compare les coefficients de chemin de **plusieurs groupes**, après avoir vérifié l'invariance "
+                    "de mesure (MICOM). Avec plus de deux groupes : test omnibus, puis comparaisons deux à deux "
+                    "corrigées par Holm.")
         cand = [c for c in raw.columns if c not in model.indicators and raw[c].nunique(dropna=True) <= 20]
         if not cand:
             st.info("Aucune colonne de groupe disponible : il faut une colonne (hors indicateurs) avec peu de "
@@ -426,23 +488,25 @@ with tabs[4]:
             c = st.columns(4)
             gcol = c[0].selectbox("Variable de groupe", cand, key="mga_col")
             levels = list(pd.unique(raw[gcol].dropna()))
-            pick = c[1].multiselect("Deux groupes à comparer", levels, default=levels[:2], max_selections=2,
-                                    key="mga_lv")
-            n_perm = c[2].number_input("Permutations", 100, 10000, 1000, step=500, key="mga_np")
-            n_bt = c[3].number_input("Bootstrap par groupe", 100, 10000, 500, step=500, key="mga_nb")
+            pick = c[1].multiselect("Groupes à comparer (au moins 2)", levels, default=levels, key="mga_lv")
+            n_perm = c[2].number_input("Permutations", 100, 10000, 1000 if len(pick) <= 2 else 500, step=100,
+                                       key="mga_np")
+            n_bt = c[3].number_input("Bootstrap par groupe", 100, 10000, 500 if len(pick) <= 2 else 200, step=100,
+                                     key="mga_nb")
             key = base_key + ("mga", gcol, tuple(map(str, pick)), n_perm, n_bt)
-            if len(pick) != 2:
-                st.info("Choisis exactement deux groupes.")
+            if len(pick) < 2:
+                st.info("Choisis au moins deux groupes.")
             elif run_button("Lancer MGA et MICOM", "run_mga"):
-                from openpls.mga import mga
+                from openpls.mga import mga, mga_multi
 
                 dg, _ = prepare_data(raw, model, keep=[gcol])
                 dg = dg[dg[gcol].isin(pick)].reset_index(drop=True)
                 bar = st.progress(0.0, text="Permutations et bootstrap…")
+                tick = lambda i, n: bar.progress(min(i / n, 1.0)) if i % 20 == 0 else None  # noqa: E731
                 try:
-                    store("mga", key, mga(dg[model.indicators], model, dg[gcol], n_perm=int(n_perm), n_boot=int(n_bt),
-                                          seed=seed, progress=lambda i, n: bar.progress(min(i / n, 1.0))
-                                          if i % 20 == 0 else None, **fit_kwargs))
+                    fn = mga if len(pick) == 2 else mga_multi
+                    store("mga", key, fn(dg[model.indicators], model, dg[gcol], n_perm=int(n_perm), n_boot=int(n_bt),
+                                         seed=seed, progress=tick, **fit_kwargs))
                 except Exception as e:  # noqa: BLE001
                     st.error(f"Échec : {e}")
                 bar.empty()
@@ -450,33 +514,56 @@ with tabs[4]:
             if out:
                 st.write("Effectifs : " + " · ".join(f"**{g}** n = {n}" for g, n in out["groups"].items()))
                 st.subheader("MICOM — invariance de mesure")
-                ok_inv = out["verdict"].startswith("invariance")
-                if ok_inv:
+                if out["invariant"]:
                     st.success(out["verdict"].capitalize())
                 else:
                     st.warning(out["verdict"].capitalize())
-                c1, c2 = st.columns([2, 3])
-                with c1:
-                    st.markdown("**Étape 2 — invariance compositionnelle**")
-                    st.dataframe(flag(yes_no(out["micom_step2"]), {"invariance compositionnelle": lambda v: v == "non"},
-                                      digits=4), width="stretch")
-                with c2:
-                    st.markdown("**Étape 3 — égalité des moyennes et des variances**")
-                    st.dataframe(fmt(yes_no(out["micom_step3"])), width="stretch")
-                st.subheader("Comparaison des chemins")
-                st.dataframe(flag(yes_no(out["comparison"]),
-                                  {"p_permutation": lambda v: v < 0.05, "p_henseler": lambda v: v < 0.05,
-                                   "p_welch": lambda v: v < 0.05}), width="stretch")
-                st.caption("En rouge : p < 0,05 (différence significative). Test de permutation recommandé "
-                           "(Chin & Dibbern 2010) ; PLS-MGA de Henseler (2009) et Welch-Satterthwaite en complément.")
-                excel_extra.update({"MGA": out["comparison"], "MICOM etape 2": out["micom_step2"],
-                                    "MICOM etape 3": out["micom_step3"]})
+                st.caption("Chaque construit est testé à 5 % : avec plusieurs construits (et plusieurs paires), un "
+                           "rejet isolé survient souvent par hasard. Un rejet sur un construit dont la relation "
+                           "structurelle diffère entre groupes peut aussi refléter cette différence (poids PLS).")
+                micoms = out["micom"] if "micom" in out else {
+                    "": {"step2": out["micom_step2"], "step3": out["micom_step3"], "verdict": out["verdict"],
+                         "invariant": out["invariant"]}}
+                for pair, mi in micoms.items():
+                    box = st.expander(f"MICOM — {pair} : {mi['verdict']}") if pair else st.container()
+                    with box:
+                        c1, c2 = st.columns([2, 3])
+                        with c1:
+                            st.markdown("**Étape 2 — invariance compositionnelle**")
+                            st.dataframe(flag(yes_no(mi["step2"]), {"invariance compositionnelle": lambda v: v == "non"},
+                                              digits=4), width="stretch")
+                        with c2:
+                            st.markdown("**Étape 3 — égalité des moyennes et des variances**")
+                            st.dataframe(fmt(yes_no(mi["step3"])), width="stretch")
+                if "omnibus" in out:
+                    st.subheader("Coefficients par groupe")
+                    st.dataframe(fmt(out["estimates"]), width="stretch")
+                    st.subheader("Test omnibus (tous les groupes)")
+                    st.dataframe(flag(yes_no(out["omnibus"]), {"p_value": lambda v: v < 0.05}), width="stretch")
+                    st.caption("H0 : le chemin est identique dans tous les groupes (test de permutation sur "
+                               "Σ n_g (β_g − β̄)²). N'interprète les paires que pour les chemins rejetés ici.")
+                    st.subheader("Comparaisons deux à deux")
+                    st.dataframe(flag(yes_no(out["pairwise"]), {"p_perm_Holm": lambda v: v < 0.05}), width="stretch")
+                    st.caption("p_perm_Holm : p-value de permutation corrigée par Holm sur l'ensemble des paires, "
+                               "pour chaque chemin. Henseler et Welch : non corrigées, à titre indicatif.")
+                    excel_extra.update({"MGA groupes": out["estimates"], "MGA omnibus": out["omnibus"],
+                                        "MGA paires": out["pairwise"]})
+                else:
+                    st.subheader("Comparaison des chemins")
+                    st.dataframe(flag(yes_no(out["comparison"]),
+                                      {"p_permutation": lambda v: v < 0.05, "p_henseler": lambda v: v < 0.05,
+                                       "p_welch": lambda v: v < 0.05}), width="stretch")
+                    st.caption("En rouge : p < 0,05 (différence significative). Test de permutation recommandé "
+                               "(Chin & Dibbern 2010) ; PLS-MGA de Henseler (2009) et Welch-Satterthwaite en "
+                               "complément.")
+                    excel_extra.update({"MGA": out["comparison"], "MICOM etape 2": out["micom_step2"],
+                                        "MICOM etape 3": out["micom_step3"]})
 
     elif choice == ADV[2]:
         st.markdown("Quels antécédents ont une forte **importance** (effet total non standardisé) mais une faible "
                     "**performance** (score moyen sur 0-100) ? Ce sont les leviers prioritaires.")
         if not plain:
-            st.warning("IPMA non disponible pour les modèles avec interaction.")
+            st.warning(f"IPMA non disponible pour les modèles {plain_why}.")
         else:
             c = st.columns(4)
             target = c[0].selectbox("Construit cible", endogenous, index=len(endogenous) - 1, key="ipma_t")
@@ -634,6 +721,10 @@ with tabs[4]:
                                                    for s, d in model.structural]).set_index("chemin")), width="stretch")
                     st.subheader("R²")
                     st.dataframe(fmt(cb.r_squared.rename("R²")), width="stretch")
+                if len(cb.higher_order_loadings):
+                    st.subheader("Chargements de second ordre")
+                    st.dataframe(flag(cb.higher_order_loadings.rename("chargement").to_frame(),
+                                      {"chargement": lambda v: v < 0.708}), width="stretch")
                 st.subheader("Corrélations entre latentes")
                 st.dataframe(fmt(cb.latent_correlations), width="stretch")
             with st.expander("Tous les paramètres (estimations non standardisées, erreurs-types, p-values)"):
@@ -643,7 +734,7 @@ with tabs[4]:
     elif choice == ADV[6]:
         st.markdown("Y a-t-il des **segments cachés** de répondants avec des relations structurelles différentes ? "
                     "FIMIX-PLS estime un mélange de régressions sur les scores des latentes.")
-        if not plain:
+        if model.interactions:
             st.warning("FIMIX-PLS n'est pas disponible pour les modèles avec interaction.")
         else:
             c = st.columns(3)
@@ -694,7 +785,7 @@ with tabs[5]:
 
 # ---------------------------------------------------------------- export
 sheets = {
-    "Chemins": paths_tbl, "R2": res.r_squared.rename("R2").to_frame(), "Effets totaux": total_effects(res),
+    "Chemins": paths_tbl, "R2": sres.r_squared.rename("R2").to_frame(), "Effets totaux": total_effects(res),
     "Chargements": loadings_tbl, "Qualite": q, "HTMT": htmt_tbl, "Fornell-Larcker": fl_tbl,
     "Scores": res.scores,
 }
@@ -706,6 +797,8 @@ for name, (k, v) in st.session_state.get("adv", {}).items():
         continue
     if name == "pred":
         excel_extra.setdefault("PLSpredict", v[0]["indicators"]); excel_extra.setdefault("CVPAT", v[1])
+    elif name == "mga" and "omnibus" in v:
+        excel_extra.setdefault("MGA omnibus", v["omnibus"]); excel_extra.setdefault("MGA paires", v["pairwise"])
     elif name == "mga":
         excel_extra.setdefault("MGA", v["comparison"]); excel_extra.setdefault("MICOM etape 2", v["micom_step2"])
         excel_extra.setdefault("MICOM etape 3", v["micom_step3"])
@@ -715,6 +808,9 @@ for name, (k, v) in st.session_state.get("adv", {}).items():
         excel_extra.setdefault("Endogeneite", v["summary"])
     elif name == "fimix":
         excel_extra.setdefault("FIMIX criteres", v["criteria"])
+if hoc_eval is not None:
+    sheets["Ordre superieur"] = hoc_eval["components"]
+    sheets["Ordre sup qualite"] = hoc_eval["quality"]
 sheets.update(excel_extra)
 st.sidebar.header("3. Export")
 st.sidebar.download_button("⬇  Résultats (Excel)", to_excel(sheets), "openpls_resultats.xlsx",

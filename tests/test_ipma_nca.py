@@ -1,8 +1,7 @@
 import numpy as np
-import pandas as pd
 import pytest
 
-from openpls import Model, fit, total_effects
+from openpls import Model, fit
 from openpls.ipma import ipma, rescaled_scores
 from openpls.nca import ce_fdh_effect, bottleneck, nca, nca_test
 from openpls.simulate import simulate

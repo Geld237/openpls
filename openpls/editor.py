@@ -28,10 +28,20 @@ def editor_state(syntax: str, positions: dict | None = None) -> dict:
     # disposition par couches : profondeur = plus long chemin depuis une exogène
     depth: dict[int, int] = {}
 
+    idx = {lv: i for i, lv in enumerate(model.latents)}
+    comp = model.components()
+
     def d(j):
         if j not in depth:
-            pred = model.predecessors(j)
-            depth[j] = 0 if not len(pred) else 1 + max(d(i) for i in pred)
+            lv = model.latents[j]
+            if lv in comp:  # composante : une colonne avant son construit d'ordre supérieur
+                depth[j] = max(d(idx[comp[lv]]) - 1, 0)
+                return depth[j]
+            pred = list(model.predecessors(j))
+            base = 0 if not pred else 1 + max(d(i) for i in pred)
+            if lv in model.higher_order:
+                base = max(base, 1)
+            depth[j] = base
         return depth[j]
 
     rows: dict[int, int] = {}
@@ -41,8 +51,8 @@ def editor_state(syntax: str, positions: dict | None = None) -> dict:
         row = rows.get(col, 0)
         rows[col] = row + 1
         x, y = positions.get(lv, (30 + 230 * col, 30 + 130 * row + 65 * (col % 2)))
-        latents.append({"name": lv, "mode": model.modes[lv], "indicators": list(model.measurement[lv]),
-                        "x": x, "y": y})
+        latents.append({"name": lv, "mode": model.modes[lv], "indicators": list(model.measurement.get(lv, [])),
+                        "children": list(model.higher_order.get(lv, [])), "x": x, "y": y})
     return {"latents": latents, "paths": [list(p) for p in model.structural],
             "interactions": [list(i) for i in model.interactions]}
 

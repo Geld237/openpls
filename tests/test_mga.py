@@ -58,3 +58,40 @@ def test_group_validation():
     d = simulate(100)
     with pytest.raises(ValueError, match="2 groupes"):
         mga(d, M, np.repeat(["a", "b", "c", "d"], 25), n_perm=10, n_boot=10)
+
+
+# ------------------------------------------------------------------ plus de deux groupes
+from openpls.mga import holm, mga_multi
+
+
+def test_holm_known_values():
+    np.testing.assert_allclose(holm([0.01, 0.04, 0.03]), [0.03, 0.06, 0.06])
+    np.testing.assert_allclose(holm([0.5, 0.9]), [1.0, 1.0])  # monotonie imposée
+
+
+def test_three_groups():
+    parts = [simulate(250, seed=301), simulate(250, seed=302), simulate(250, seed=303, eta_path=0.1)]
+    d = pd.concat(parts, ignore_index=True)
+    g = np.repeat(["A", "B", "C"], 250)
+    out = mga_multi(d, M, g, n_perm=200, n_boot=100, seed=1)
+    om = out["omnibus"]
+    assert om.loc["ETA1 -> ETA2", "p_value"] < 0.01
+    assert om.loc["XI1 -> ETA1", "p_value"] > 0.05
+    pw = out["pairwise"].loc["ETA1 -> ETA2"]
+    assert pw.loc["A vs C", "différence significative (Holm, 5 %)"]
+    assert pw.loc["B vs C", "différence significative (Holm, 5 %)"]
+    assert not pw.loc["A vs B", "différence significative (Holm, 5 %)"]
+    assert (pw["p_perm_Holm"] >= pw["p_permutation"]).all()
+    assert set(out["micom"]) == {"A vs B", "A vs C", "B vs C"}
+    assert out["invariant"] == all(v["invariant"] for v in out["micom"].values())
+    assert out["verdict"].startswith("invariance au moins") == out["invariant"]
+    assert out["estimates"].shape == (3, 3)
+
+
+def test_two_groups_omnibus_matches_pairwise_test():
+    d, g = two_groups(path2=0.3)
+    multi = mga_multi(d, M, g, n_perm=300, n_boot=50, seed=3)
+    # avec 2 groupes, la statistique omnibus est une fonction monotone de |β1 - β2|
+    p_omni = multi["omnibus"].loc["ETA1 -> ETA2", "p_value"]
+    p_pair = multi["pairwise"].loc[("ETA1 -> ETA2", "A vs B"), "p_permutation"]
+    assert abs(p_omni - p_pair) < 0.05

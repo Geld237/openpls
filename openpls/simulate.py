@@ -47,3 +47,22 @@ def simulate_moderation(n: int = 500, loading: float = 0.8, seed: int = 0,
         for k in range(1, 4):
             cols[f"{name}_{k}"] = loading * lv + rng.normal(0, np.sqrt(1 - loading**2), n)
     return pd.DataFrame(cols)
+
+
+def simulate_higher_order(n: int = 500, loading: float = 0.8, seed: int = 0,
+                          second_order=(0.8, 0.75, 0.7), b_in: float = 0.5, b_out: float = 0.6) -> pd.DataFrame:
+    """Modèle vrai de second ordre (réflectif-réflectif) :
+    X -> HOC (b_in), HOC -> Y (b_out) ; HOC -> L1, L2, L3 (chargements `second_order`).
+    Indicateurs x_1..3, l1_1..3, l2_1..3, l3_1..3, y_1..3."""
+    rng = np.random.default_rng(seed)
+    x = rng.normal(size=n)
+    hoc = b_in * x + rng.normal(0, np.sqrt(1 - b_in**2), n)
+    y = b_out * hoc + rng.normal(0, np.sqrt(1 - b_out**2), n)
+    lat = {"x": x, "y": y}
+    for k, lam in enumerate(second_order, 1):
+        lat[f"l{k}"] = lam * hoc + rng.normal(0, np.sqrt(1 - lam**2), n)
+    cols = {}
+    for name in ["x"] + [f"l{k}" for k in range(1, len(second_order) + 1)] + ["y"]:
+        for k in range(1, 4):
+            cols[f"{name}_{k}"] = loading * lat[name] + rng.normal(0, np.sqrt(1 - loading**2), n)
+    return pd.DataFrame(cols)

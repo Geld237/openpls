@@ -41,6 +41,9 @@
   .lv .ind { font-size:10px; background:var(--gold-l); border:1px solid var(--gold); border-radius:3px; padding:0 3px; cursor:pointer; }
   .lv .ind:hover { text-decoration:line-through; color:var(--red); }
   .lv .empty { font-size:10px; color:var(--red); }
+  .lv.hoc { border-width:4px; border-style:double; }
+  .lv .comp { font-size:10px; background:#e8eef7; border:1px solid var(--blue); color:var(--blue); border-radius:3px; padding:0 3px; cursor:pointer; }
+  .lv .comp:hover { text-decoration:line-through; color:var(--red); }
   .lv .handle { position:absolute; right:-8px; top:50%; margin-top:-8px; width:16px; height:16px; border-radius:50%;
                 background:var(--blue); border:2px solid #fff; cursor:crosshair; }
   .lv .handle:hover { transform:scale(1.25); }
@@ -50,7 +53,7 @@
 <div id="app">
   <div id="side">
     <h4>Indicateurs</h4>
-    <p class="hint">Glisse un indicateur sur une variable latente, ou sur le fond pour en créer une. Ctrl/⌘-clic : sélection multiple.</p>
+    <p class="hint">Glisse un indicateur sur une variable latente, ou sur le fond pour en créer une. Ctrl/⌘-clic : sélection multiple. Ordre supérieur : crée une variable vide puis « + Composante ».</p>
     <div id="chips"></div>
   </div>
   <div id="main">
@@ -77,6 +80,7 @@ window.addEventListener("message", (ev) => {
   if (a.version !== version) {               // nouveau modèle venant de Python : on recharge
     version = a.version;
     S = JSON.parse(JSON.stringify(a.state));
+    S.latents.forEach((l) => { l.children = l.children || []; });
     selected = null; chipSel.clear();
     setMsg("");
   }
@@ -91,6 +95,7 @@ function cleanName(s) { s = String(s).replace(/[^A-Za-z0-9_.]/g, "_").replace(/^
 function uniqueName(base) { let n = cleanName(base) || "LV", k = 2, out = n; while (lvByName(out)) out = n + "_" + k++; return out; }
 function prefixOf(col) { const m = String(col).match(/^(.*?)[_\-. ]?(\d+)$/); return (m && m[1]) ? m[1].toUpperCase() : String(col).toUpperCase(); }
 function owner(col) { return S.latents.find((l) => l.indicators.includes(col)); }
+function parentOf(name) { return S.latents.find((l) => l.children.includes(name)); }
 function reaches(from, to) {        // existe-t-il un chemin from -> ... -> to ?
   const seen = new Set(), stack = [from];
   while (stack.length) { const c = stack.pop(); if (c === to) return true; if (seen.has(c)) continue; seen.add(c);
@@ -101,18 +106,21 @@ function reaches(from, to) {        // existe-t-il un chemin from -> ... -> to ?
 // ---------------------------------------------------------------- actions
 function assign(cols, lvName) {
   const lv = lvByName(lvName);
+  if (lv.children.length) { setMsg(lv.name + " est d'ordre supérieur : ses termes sont des variables latentes", true); return render(); }
   cols.forEach((c) => { S.latents.forEach((l) => { l.indicators = l.indicators.filter((i) => i !== c); });
                         lv.indicators.push(c); });
   chipSel.clear(); render();
 }
 function addLatent(name, x, y, cols) {
-  const lv = { name: uniqueName(name), mode: "A", indicators: [], x, y };
+  const lv = { name: uniqueName(name), mode: "A", indicators: [], children: [], x, y };
   S.latents.push(lv);
   if (cols && cols.length) assign(cols, lv.name); else render();
   select({ type: "lv", name: lv.name });
 }
 function addPath(src, dst) {
   if (src === dst) return;
+  const loc = [src, dst].find((n) => parentOf(n));
+  if (loc) return setMsg(loc + " est une composante de " + parentOf(loc).name + " : relie plutôt " + parentOf(loc).name, true);
   if (S.paths.some((p) => p[0] === src && p[1] === dst)) return setMsg("Ce chemin existe déjà", true);
   if (reaches(dst, src)) return setMsg("Impossible : ce chemin créerait un cycle", true);
   S.paths.push([src, dst]); setMsg(src + " → " + dst + " ajouté"); render();
@@ -121,6 +129,7 @@ function removeLatent(name) {
   S.latents = S.latents.filter((l) => l.name !== name);
   S.paths = S.paths.filter((p) => p[0] !== name && p[1] !== name);
   S.interactions = S.interactions.filter((i) => !i.includes(name));
+  S.latents.forEach((l) => { l.children = l.children.filter((c) => c !== name); });
   selected = null; render();
 }
 function rename(oldN, newN) {
@@ -130,11 +139,14 @@ function rename(oldN, newN) {
   lvByName(oldN).name = newN;
   S.paths.forEach((p) => { if (p[0] === oldN) p[0] = newN; if (p[1] === oldN) p[1] = newN; });
   S.interactions.forEach((it) => { for (let k = 0; k < 3; k++) if (it[k] === oldN) it[k] = newN; });
+  S.latents.forEach((l) => { l.children = l.children.map((c) => (c === oldN ? newN : c)); });
   selected = { type: "lv", name: newN }; render();
 }
 function toSyntax() {
   const lines = ["# Modèle de mesure  ( =~ réflectif,  <~ formatif )"];
   S.latents.forEach((l) => { if (l.indicators.length) lines.push(`${l.name} ${l.mode === "B" ? "<~" : "=~"} ${l.indicators.join(" + ")}`); });
+  const hocs = S.latents.filter((l) => l.children.length);
+  if (hocs.length) { lines.push("", "# Construits d'ordre supérieur"); hocs.forEach((l) => lines.push(`${l.name} ${l.mode === "B" ? "<~" : "=~"} ${l.children.join(" + ")}`)); }
   lines.push("", "# Modèle structurel  ( cible ~ source1 + source2 ;  X:M = modération )");
   S.latents.forEach((l) => {
     const terms = S.paths.filter((p) => p[1] === l.name).map((p) => p[0])
@@ -144,8 +156,10 @@ function toSyntax() {
   return lines.join("\n") + "\n";
 }
 function apply() {
-  const empty = S.latents.filter((l) => !l.indicators.length).map((l) => l.name);
+  const empty = S.latents.filter((l) => !l.indicators.length && !l.children.length).map((l) => l.name);
   if (empty.length) return setMsg("Sans indicateur : " + empty.join(", "), true);
+  const thin = S.latents.filter((l) => l.children.length === 1).map((l) => l.name);
+  if (thin.length) return setMsg("Ordre supérieur avec une seule composante : " + thin.join(", "), true);
   if (!S.latents.length) return setMsg("Ajoute au moins une variable latente", true);
   const positions = {}; S.latents.forEach((l) => { positions[l.name] = [l.x, l.y]; });
   setValue({ nonce: Date.now() + Math.random(), syntax: toSyntax(), positions });
@@ -154,8 +168,11 @@ function apply() {
 function autoLayout() {
   const depth = {}; const lvs = S.latents.map((l) => l.name);
   const d = (n, seen) => { if (depth[n] !== undefined) return depth[n]; if (seen.has(n)) return 0; seen.add(n);
+    const par = parentOf(n); if (par) return (depth[n] = Math.max(d(par.name, seen) - 1, 0));
     const preds = S.paths.filter((p) => p[1] === n).map((p) => p[0]);
-    return (depth[n] = preds.length ? 1 + Math.max(...preds.map((p) => d(p, seen))) : 0); };
+    let v = preds.length ? 1 + Math.max(...preds.map((p) => d(p, seen))) : 0;
+    if (lvByName(n).children.length) v = Math.max(v, 1);
+    return (depth[n] = v); };
   lvs.forEach((n) => d(n, new Set()));
   const cols = {}; lvs.forEach((n) => (cols[depth[n]] = cols[depth[n]] || []).push(n));
   Object.entries(cols).forEach(([c, names]) => names.forEach((n, i) => { const l = lvByName(n); l.x = 30 + c * 230; l.y = 30 + i * 130 + (c % 2) * 65; }));
@@ -191,6 +208,15 @@ function render() {
     inp.addEventListener("blur", () => rename(lv.name, inp.value));
     tb.appendChild(inp);
     btn(lv.mode === "A" ? "Réflectif (=~)" : "Formatif (<~)", () => { lv.mode = lv.mode === "A" ? "B" : "A"; render(); }).title = "Basculer réflectif / formatif";
+    const cand = S.latents.filter((l) => l.name !== lv.name && l.indicators.length && !l.children.length && !parentOf(l.name)
+                                     && !S.paths.some((p) => p.includes(l.name)));
+    if (!lv.indicators.length && !parentOf(lv.name) && cand.length) {
+      const cs = document.createElement("select"); cs.id = "compsel";
+      cand.forEach((l) => { const o = document.createElement("option"); o.value = o.textContent = l.name; cs.appendChild(o); });
+      tb.appendChild(cs);
+      btn("+ Composante", () => { lv.children.push(cs.value); setMsg(cs.value + " devient composante de " + lv.name); render(); })
+        .title = "Fait de cette variable un construit d'ordre supérieur (les composantes ne doivent pas avoir de chemins)";
+    }
     btn("Supprimer", () => removeLatent(lv.name), "danger");
   } else if (selected && selected.type === "path" && S.paths[selected.i]) {
     const p = S.paths[selected.i]; sep();
@@ -222,12 +248,16 @@ function render() {
   cv.querySelectorAll(".lv").forEach((n) => n.remove());
   S.latents.forEach((lv) => {
     const el = document.createElement("div");
-    el.className = "lv" + (lv.mode === "B" ? " formative" : "") + (selected && selected.type === "lv" && selected.name === lv.name ? " sel" : "");
+    el.className = "lv" + (lv.mode === "B" ? " formative" : "") + (lv.children.length ? " hoc" : "") + (selected && selected.type === "lv" && selected.name === lv.name ? " sel" : "");
     el.style.left = lv.x + "px"; el.style.top = lv.y + "px"; el.dataset.name = lv.name;
-    el.innerHTML = `<span class="name"></span><span class="mode">${lv.mode === "B" ? "formatif" : "réflectif"}</span><div class="inds"></div><div class="handle" title="Glisser vers une autre variable pour créer un chemin"></div>`;
+    el.innerHTML = `<span class="name"></span><span class="mode">${lv.children.length ? "ordre sup. · " : ""}${lv.mode === "B" ? "formatif" : "réflectif"}</span><div class="inds"></div><div class="handle" title="Glisser vers une autre variable pour créer un chemin"></div>`;
     el.querySelector(".name").textContent = lv.name;
     const inds = el.querySelector(".inds");
-    if (!lv.indicators.length) inds.innerHTML = '<span class="empty">dépose des indicateurs ici</span>';
+    if (!lv.indicators.length && !lv.children.length) inds.innerHTML = '<span class="empty">dépose des indicateurs ici</span>';
+    lv.children.forEach((c) => { const s = document.createElement("span"); s.className = "comp"; s.textContent = c; s.title = "Composante — cliquer pour retirer";
+      s.addEventListener("mousedown", (e) => e.stopPropagation());
+      s.addEventListener("click", (e) => { e.stopPropagation(); lv.children = lv.children.filter((x) => x !== c); render(); });
+      inds.appendChild(s); });
     lv.indicators.forEach((c) => { const s = document.createElement("span"); s.className = "ind"; s.textContent = c; s.title = "Cliquer pour retirer";
       s.addEventListener("mousedown", (e) => e.stopPropagation());
       s.addEventListener("click", (e) => { e.stopPropagation(); lv.indicators = lv.indicators.filter((i) => i !== c); render(); });
@@ -255,7 +285,8 @@ function drawEdges() {
   const svg = $("edges"), cv = $("canvas");
   svg.setAttribute("width", cv.scrollWidth); svg.setAttribute("height", cv.scrollHeight);
   let h = `<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E5E9E"/></marker>
-           <marker id="arrM" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B8962E"/></marker></defs>`;
+           <marker id="arrM" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B8962E"/></marker>
+           <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/></marker></defs>`;
   const mids = {};
   const rects = S.latents.map((l) => ({ name: l.name, el: $("canvas").querySelector(`.lv[data-name="${CSS.escape(l.name)}"]`) }))
     .filter((r) => r.el).map((r) => ({ name: r.name, x0: r.el.offsetLeft - 8, y0: r.el.offsetTop - 8,
@@ -263,6 +294,12 @@ function drawEdges() {
   const blocker = (a, b, s, e) => rects.find((r) => r.name !== a && r.name !== b && [...Array(24).keys()].some((k) => {
     const t = (k + 0.5) / 24, x = s.x + (e.x - s.x) * t, y = s.y + (e.y - s.y) * t;
     return x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1; }));
+  S.latents.forEach((l) => l.children.forEach((c) => {
+    const [from, to] = l.mode === "B" ? [c, l.name] : [l.name, c];
+    const a = center(from), b = center(to); if (!a || !b) return;
+    const s = border(b, a), e = border(a, b);
+    h += `<line x1="${s.x}" y1="${s.y}" x2="${e.x}" y2="${e.y}" stroke="#6b7280" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#arrG)"/>`;
+  }));
   S.paths.forEach((p, i) => {
     const a = center(p[0]), b = center(p[1]); if (!a || !b) return;
     let s = border(b, a), e = border(a, b), d;

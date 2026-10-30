@@ -57,3 +57,34 @@ def test_standard_errors_close_to_semopy_reference():
 def test_rejects_formative():
     with pytest.raises(ValueError, match="réflectifs"):
         fit_cbsem(simulate(100), Model.from_syntax(FULL.replace("XI1  =~", "XI1  <~")))
+
+
+HOC_SYNTAX = """X =~ x_1 + x_2 + x_3
+L1 =~ l1_1 + l1_2 + l1_3
+L2 =~ l2_1 + l2_2 + l2_3
+L3 =~ l3_1 + l3_2 + l3_3
+Y =~ y_1 + y_2 + y_3
+HOC =~ L1 + L2 + L3
+HOC ~ X
+Y ~ HOC"""
+
+
+def test_second_order_matches_semopy_reference():
+    """Valeurs de référence semopy 2.3.11 (obj='MLW') sur simulate_higher_order(800, seed=7)."""
+    from openpls.simulate import simulate_higher_order
+
+    d = simulate_higher_order(800, seed=7)
+    sem = fit_cbsem(d, Model.from_syntax(HOC_SYNTAX))
+    assert sem.converged and sem.fit_indices["ddl"] == 85
+    assert sem.fit_indices["chi2"] == pytest.approx(94.8992, abs=5e-3)
+    cfa = fit_cbsem(d, Model.from_syntax(HOC_SYNTAX), cfa=True)
+    assert cfa.fit_indices["ddl"] == 84 and cfa.fit_indices["chi2"] == pytest.approx(93.0966, abs=5e-3)
+    # vrais chargements de second ordre 0,8 / 0,75 / 0,7
+    np.testing.assert_allclose(sem.higher_order_loadings.to_numpy(), [0.8, 0.75, 0.7], atol=0.06)
+    assert "L1" not in sem.r_squared.index and sem.path_coefficients.loc["HOC", "L1"] == 0
+
+
+def test_second_order_rejects_formative_hoc():
+    with pytest.raises(ValueError, match="réflectifs"):
+        fit_cbsem(simulate(100), Model.from_syntax(
+            "A =~ xi1_1 + xi1_2\nB =~ xi2_1 + xi2_2\nH <~ A + B\nE =~ eta1_1 + eta1_2\nE ~ H"))

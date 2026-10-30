@@ -21,6 +21,8 @@ from .model import Model
 def rescaled_scores(res, data: pd.DataFrame, scale: tuple[float, float] | dict | None = None):
     """Scores des latentes sur 0-100 et poids déstandardisés normalisés. Retourne (scores, poids)."""
     model = res.model
+    if res.spec is not None and res.spec.higher_order:
+        raise ValueError("IPMA non disponible pour les modèles d'ordre supérieur")
     if model.interactions or res.spec is not None:
         raise ValueError("IPMA non disponible pour les modèles avec interaction")
     cols = model.indicators
