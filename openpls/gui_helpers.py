@@ -51,52 +51,54 @@ def num(v: float, digits: int = 3) -> str:
     return s.replace(".", ",") if DECIMAL == "," else s
 
 
-def stars(p: float, alpha: float = 0.05) -> str:
-    """Convention des articles : *** p < 0,001 · ** p < 0,01 · * p < 0,05 ; au seuil de 10 %, † p < 0,10."""
+def stars(p: float, alpha: float | None = None) -> str:
+    """Les trois seuils à la fois : *** p < 0,01 · ** p < 0,05 · * p < 0,10 ; sinon ns.
+    (`alpha` est accepté pour compatibilité, il ne change pas les étoiles.)"""
     if p is None or not np.isfinite(p):
         return ""
-    if p < 0.001:
-        return "***"
     if p < 0.01:
-        return "**"
+        return "***"
     if p < 0.05:
+        return "**"
+    if p < 0.10:
         return "*"
-    if alpha >= 0.10 and p < 0.10:
-        return "†"
     return "ns"
 
 
-def stars_legend(alpha: float = 0.05) -> str:
-    out = f"*** p < {num(0.001)}, ** p < {num(0.01, 2)}, * p < {num(0.05, 2)}"
-    if alpha >= 0.10:
-        out += f", † p < {num(0.10, 2)}"
-    return out + ", ns non significatif"
+def stars_legend(alpha: float | None = None) -> str:
+    return f"*** p < {num(0.01, 2)}, ** p < {num(0.05, 2)}, * p < {num(0.10, 2)}, ns non significatif"
 
 
 def fmt_p(p: float) -> str:
     return f"< {num(0.001)}" if p < 0.001 else num(p)
 
 
+SIG_GREEN, SIG_RED = "#2F7D4F", "#B83A2E"
+
+
 def _edge_label(value: float, key, boot, mode: str, alpha: float = 0.05) -> str:
-    """Texte d'une flèche : coefficient (+ étoiles, p ou t si le bootstrap est disponible)."""
-    if boot is None or key not in boot.index:
+    """Texte d'une flèche : coefficient, suivi des étoiles en mode « stars »."""
+    if boot is None or key not in boot.index or mode != "stars":
         return num(value)
-    r = boot.loc[key]
-    st = stars(r["p_value"], alpha)
-    if mode == "p":
-        return f"{num(value)}\\n(p {fmt_p(r['p_value']) if r['p_value'] < 0.001 else '= ' + fmt_p(r['p_value'])})"
-    if mode == "t":
-        return f"{num(value)}\\n(t = {num(r['t_value'], 2)})"
-    return f"{num(value)}{'' if st == 'ns' else st}" + (" ns" if st == "ns" else "")
+    return f"{num(value)}{stars(boot.loc[key, 'p_value'])}".replace("ns", " ns")
 
 
-def _edge_style(value: float, key, boot, alpha: float = 0.05) -> str:
+def _significant(key, boot, mode: str, alpha: float) -> bool | None:
+    """None si pas de bootstrap ; sinon significatif au seuil du mode (10 % pour les étoiles)."""
     if boot is None or key not in boot.index:
-        return f'color="{SIG_POS}", fontcolor="{SIG_POS}"'
+        return None
     p = boot.loc[key, "p_value"]
-    if not (np.isfinite(p) and p < alpha):
+    return bool(np.isfinite(p) and p < (0.10 if mode == "stars" else alpha))
+
+
+def _edge_style(value: float, key, boot, alpha: float = 0.05, mode: str = "stars") -> str:
+    sig = _significant(key, boot, mode, alpha)
+    if mode == "colors" and sig is not None:
+        return (f'color="{SIG_GREEN}", fontcolor="{SIG_GREEN}"' if sig
+                else f'color="{SIG_RED}", fontcolor="{SIG_RED}", style=dashed')
+    if sig is False:
         return f'color="{NONSIG}", fontcolor="#6B7889", style=dashed'
-    c = SIG_POS if value >= 0 else SIG_NEG
+    c = SIG_POS if value >= 0 or sig is None else SIG_NEG
     return f'color="{c}", fontcolor="{c}"'
 
 
@@ -105,9 +107,11 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
     """Diagramme Graphviz (DOT) du modèle, annoté des estimations si `res` est fourni.
 
     `boot` : tableau de bootstrap_statistics (index (type, nom)) ; les flèches portent alors
-    des étoiles (ou p, ou t selon `label_mode` : "stars", "p", "t") et sont colorées :
+    `label_mode` : "stars" = étoiles (1 %, 5 %, 10 % à la fois), non significatif à 10 % en gris pointillé ;
+    "colors" = coefficients seuls, vert si significatif au seuil `alpha`, rouge pointillé sinon ; "none" = coefficients seuls.
+    En mode "stars", les flèches sont colorées :
     bleu = positif significatif, rouge = négatif significatif, gris pointillé = non significatif (5 %)."""
-    if label_mode == "none":  # significativité masquée : coefficients seuls, sans couleur ni pointillés
+    if label_mode == "none":  # coefficients seuls, sans couleur ni pointillés
         boot = None
     lines = [
         "digraph G {",
@@ -149,7 +153,11 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
                     else:
                         val, key = meas.outer_weights[(lv, ind)], ("outer_weight", f"{ind} -> {lv}")
                     lab = f", label={_q(_edge_label(val, key, boot, label_mode, alpha))}"
-                    if boot is not None and key in boot.index and not boot.loc[key, "p_value"] < alpha:
+                    sig = _significant(key, boot, label_mode, alpha)
+                    if label_mode == "colors" and sig is not None:
+                        lab += (f', color="{SIG_GREEN}", fontcolor="{SIG_GREEN}"' if sig
+                                else f', style=dashed, color="{SIG_RED}", fontcolor="{SIG_RED}"')
+                    elif sig is False:
                         lab += f', style=dashed, color="{NONSIG}"'
                 if model.modes[lv] == "A":
                     lines.append(f'  {_q("lv:" + lv)} -> {_q("mv:" + ind)} [arrowsize=0.6{lab}];')
@@ -172,7 +180,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         if res is not None:
             v = res.path_coefficients.loc[s, d]
             key = ("direct", f"{s} -> {d}")
-            attrs = (_edge_style(v, key, boot, alpha) + f", label={_q(_edge_label(v, key, boot, label_mode, alpha))}"
+            attrs = (_edge_style(v, key, boot, alpha, label_mode) + f", label={_q(_edge_label(v, key, boot, label_mode, alpha))}"
                      f", penwidth={1 + 3 * min(abs(v), 1):.2f}")
         lines.append(f'  {_q("lv:" + s)} -> {_q("lv:" + d)} [{attrs}];')
     for a, b, d in getattr(model, "interactions", []):
@@ -181,7 +189,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         if res is not None and name in res.path_coefficients.index:
             v = res.path_coefficients.loc[name, d]
             key = ("direct", f"{name} -> {d}")
-            attrs = _edge_style(v, key, boot, alpha) + f", label={_q(_edge_label(v, key, boot, label_mode, alpha))}"
+            attrs = _edge_style(v, key, boot, alpha, label_mode) + f", label={_q(_edge_label(v, key, boot, label_mode, alpha))}"
             if boot is None or key not in boot.index:
                 attrs = 'color="#B8862B", fontcolor="#8a6d1f", style=dashed' + f", label={_q(num(v))}"
         lines.append(f'  {_q("ix:" + name)} [label={_q(a + " × " + b)}, shape=diamond, style=filled, '

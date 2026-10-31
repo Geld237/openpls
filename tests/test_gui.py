@@ -216,10 +216,10 @@ def test_auto_bootstrap_shows_t_p_and_stars():
     assert "***" in dot and "#2E5E9E" in dot
     loads = next(df.value for df in at.dataframe if "t (chargement)" in df.value.columns)
     assert (loads["sig. chargement"] == "***").all()
-    # affichage des p sur le diagramme
-    at.radio(key="diag_mode").set_value("p").run()
-    dot = " ".join(g.proto.spec for g in at.get("graphviz_chart"))
-    assert "(p < 0.001)" in dot
+    # sans les étoiles : vert / rouge selon un seuil
+    at.radio(key="sig_view").set_value("colors").run()
+    dot = next(g.proto.spec for g in at.get("graphviz_chart") if "R²" in g.proto.spec)
+    assert "*" not in dot and "#2F7D4F" in dot
 
 
 def test_dot_marks_nonsignificant_paths():
@@ -256,6 +256,7 @@ def test_changing_threshold_keeps_bootstrap_and_stars():
     at.session_state["n_boot"] = 100
     at.run()
     _btn(at, "Estimer").click().run()
+    at.radio(key="sig_view").set_value("colors").run()
     for a, lo in ((0.01, "IC 0.5 %"), (0.10, "IC 5 %"), (0.05, "IC 2.5 %")):
         at.radio(key="alpha").set_value(a).run()
         assert not at.exception, at.exception
@@ -263,23 +264,35 @@ def test_changing_threshold_keeps_bootstrap_and_stars():
         assert {"t", "p", "sig.", lo} <= set(paths.columns), (a, list(paths.columns))
         assert paths.loc["ETA1 -> ETA2", "sig."] == "***"
         dot = " ".join(g.proto.spec for g in at.get("graphviz_chart"))
-        assert "***" in dot
+        assert "#2F7D4F" in dot  # vert : significatif
     # le seuil choisi survit à un changement d'onglet et vaut pour la page Significativité
     at.radio(key="alpha").set_value(0.01).run()
     assert at.session_state["alpha_saved"] == 0.01
     assert any("IC percentile à 99 %" in m.value for m in at.markdown)
 
 
-def test_significance_can_be_hidden_on_diagram():
-    at = _app(auto_boot=True)
-    at.session_state["n_boot"] = 100
-    at.run()
-    _btn(at, "Estimer").click().run()
-    at.radio(key="diag_mode").set_value("none").run()
-    assert not at.exception, at.exception
-    dot = next(g.proto.spec for g in at.get("graphviz_chart") if "R²" in g.proto.spec)
-    assert "*" not in dot and "style=dashed" not in dot and " ns" not in dot
-    assert at.radio(key="alpha").disabled
+def test_significance_modes_on_diagram():
+    """Deux choix : étoiles (1, 5 et 10 % à la fois) ou couleurs selon un seuil (vert / rouge)."""
+    from openpls import bootstrap_statistics
+    from openpls.assessment import measurement_statistics
+    from openpls.effects import effect_statistics
+
+    d = simulate(300, seed=2)          # XI1 -> ETA2 vaut 0 dans le vrai modèle
+    m = Model.from_syntax(SYNTAX.replace("ETA2 ~ ETA1", "ETA2 ~ ETA1 + XI1"))
+    r = fit(d, m)
+    b = bootstrap_statistics(d, m, lambda x: pd.concat([effect_statistics(x), measurement_statistics(x)]),
+                             n_boot=100)
+    col = model_to_dot(m, r, boot=b, label_mode="colors", alpha=0.05)
+    sig = next(l for l in col.splitlines() if '"lv:ETA1" -> "lv:ETA2"' in l)
+    ns = next(l for l in col.splitlines() if '"lv:XI1" -> "lv:ETA2"' in l)
+    assert "#2F7D4F" in sig and "*" not in sig
+    assert "#B83A2E" in ns and "style=dashed" in ns and "ns" not in ns
+
+
+def test_star_convention_uses_three_thresholds():
+    from openpls.gui_helpers import stars
+
+    assert [stars(p) for p in (0.005, 0.03, 0.07, 0.2)] == ["***", "**", "*", "ns"]
 
 
 def test_decimal_comma(monkeypatch):
@@ -291,7 +304,7 @@ def test_decimal_comma(monkeypatch):
     assert not at.exception, at.exception
     dot = " ".join(g.proto.spec for g in at.get("graphviz_chart"))
     assert "R² = 0," in dot and "R² = 0." not in dot
-    assert any("0,001" in c.value for c in at.caption)
+    assert any("p < 0,01" in c.value for c in at.caption)
 
 
 def test_separator_follows_language():

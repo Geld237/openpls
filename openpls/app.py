@@ -388,7 +388,7 @@ with page_model:
         st.session_state["_goto"] = "Résultats"  # on montre directement les résultats
         st.rerun()
     boot = current_boot() if res is not None else None
-    label_mode = st.session_state.get("diag_mode", "stars")
+    label_mode = st.session_state.get("sig_view", "stars")
 
     with right:
         if model is not None:
@@ -429,30 +429,29 @@ with page_res:
         st.error("L'algorithme n'a pas convergé : vérifie la spécification du modèle.")
     with st.expander("Diagramme estimé", expanded=True):
         if boot is not None:
-            c_mode, c_alpha = st.columns([3, 2])
-            st.session_state.setdefault("diag_mode", "stars")  # étoiles par défaut
-            c_mode.radio("Significativité sur les flèches", ["none", "stars", "p", "t"], horizontal=True,
-                         key="diag_mode", format_func={"none": "masquée", "stars": "étoiles", "p": "valeur p",
-                                                       "t": "valeur t"}.get,
-                         help="« masquée » : coefficients seuls, sans étoiles ni couleur de significativité.")
+            st.session_state.setdefault("sig_view", "stars")
+            st.radio("Significativité sur le diagramme", ["stars", "colors"], horizontal=True, key="sig_view",
+                     format_func={"stars": "Afficher (étoiles : 1 %, 5 % et 10 %)",
+                                  "colors": "Ne pas afficher (couleurs selon un seuil)"}.get)
             if "alpha" not in st.session_state:
                 st.session_state["alpha"] = alpha
-            c_alpha.radio("Seuil de significativité", [0.01, 0.05, 0.10], horizontal=True, key="alpha",
-                          format_func=lambda a: f"{num(a * 100, 0)} %",
-                          on_change=lambda: st.session_state.update(alpha_saved=st.session_state["alpha"]),
-                          disabled=st.session_state.get("diag_mode") == "none",
-                          help="S'applique au diagramme, aux tableaux (étoiles, gras) et aux intervalles de confiance.")
-            alpha = st.session_state["alpha"]
-        st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=st.session_state.get("diag_mode", "stars"),
+            if st.session_state["sig_view"] == "colors":
+                st.radio("Seuil", [0.01, 0.05, 0.10], horizontal=True, key="alpha",
+                         format_func=lambda a: f"{num(a * 100, 0)} %",
+                         on_change=lambda: st.session_state.update(alpha_saved=st.session_state["alpha"]),
+                         help="Vert : significatif à ce seuil. Rouge : non significatif. Le seuil vaut aussi pour "
+                              "le gras des tableaux et les intervalles de confiance.")
+                alpha = st.session_state["alpha"]
+        _mode = st.session_state.get("sig_view", "stars")
+        st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=_mode,
                                        alpha=alpha),
                           width="stretch")
-        if boot is not None and st.session_state.get("diag_mode") == "none":
-            st.caption("Coefficients seuls. Choisis « étoiles », « valeur p » ou « valeur t » pour afficher la "
-                       "significativité.")
+        if boot is not None and _mode == "colors":
+            st.caption(f"Seuil de {num(alpha * 100, 0)} % (bootstrap, {boot.attrs.get('n_boot_ok', '')} tirages). "
+                       "Vert : significatif. Rouge pointillé : non significatif. L'épaisseur suit la taille de l'effet.")
         elif boot is not None:
-            st.caption(f"{stars_legend(alpha)} (bootstrap, {boot.attrs.get('n_boot_ok', '')} tirages). "
-                       f"Seuil retenu : {num(alpha * 100, 0)} %. Bleu : effet positif significatif · rouge : effet "
-                       "négatif significatif · gris pointillé : non significatif. L'épaisseur suit la taille de l'effet.")
+            st.caption(f"{stars_legend()} (bootstrap, {boot.attrs.get('n_boot_ok', '')} tirages). "
+                       "Gris pointillé : non significatif même à 10 %. L'épaisseur suit la taille de l'effet.")
         else:
             st.caption("Coefficients seuls : le bootstrap n'a pas été lancé. Il n'est utile que pour la "
                        "significativité (t, p, étoiles, intervalles de confiance) : lance-le dans l'onglet "
