@@ -10,3 +10,8 @@ os.environ.setdefault("OPENPLS_DECIMAL", ".")
 
 # interface en français dans les tests (sinon : langue du système ou préférence enregistrée)
 os.environ.setdefault("OPENPLS_LANG", "fr")
+
+# préférences, sauvegarde automatique et projets récents des tests : dossier temporaire, jamais ~/.openpls
+import tempfile
+
+os.environ.setdefault("OPENPLS_HOME", tempfile.mkdtemp(prefix="openpls-tests-"))

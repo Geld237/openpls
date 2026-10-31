@@ -44,6 +44,32 @@ from openpls import menu as _menu
 
 _menu.render()  # À propos, Mises à jour, Paramètres : en haut à droite, sur la ligne des onglets
 
+# ---- reprise du travail : au premier affichage, proposer la dernière sauvegarde automatique
+if "_resume_checked" not in st.session_state:
+    st.session_state["_resume_checked"] = True
+    from openpls.project import read_autosave as _read_autosave
+
+    _auto = _read_autosave() if load_prefs().get("autosave", True) else None
+    if _auto:
+        st.session_state["_resume_offer"] = _auto[1]
+if st.session_state.get("_resume_offer"):
+    _o = st.session_state["_resume_offer"]
+    with st.container(key="resume", border=True):
+        st.markdown(T("**Reprendre le travail en cours ?** {name}, enregistré automatiquement le {d} "
+                      "({n} lignes{r}).", name=_o.get("name", ""), d=_o.get("date", ""), n=_o.get("rows", "?"),
+                      r=T(", avec résultats") if _o.get("results") else ""))
+        _c1, _c2, _ = st.columns([1, 1, 4])
+
+        def _resume():
+            from openpls.project import read_autosave
+
+            a = read_autosave()
+            if a:
+                open_project(a[1].get("name", "autosave.openpls"), a[0], remember=False)
+
+        _c1.button(T("Reprendre"), type="primary", on_click=_resume, key="resume_yes")
+        _c2.button(T("Ignorer"), on_click=lambda: st.session_state.pop("_resume_offer", None), key="resume_no")
+
 EXAMPLE_SYNTAX = T("# Modèle de mesure  ( =~ réflectif,  <~ formatif )") + """
 XI1  =~ xi1_1 + xi1_2 + xi1_3
 XI2  =~ xi2_1 + xi2_2 + xi2_3
@@ -204,13 +230,18 @@ def open_folder(path: Path) -> None:
         subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(path)])
 
 
-def offer_file(label: str, data, filename: str, key: str, mime: str = "text/plain", container=st) -> None:
+def offer_file(label: str, data, filename: str, key: str, mime: str = "text/plain", container=st,
+               on_click=None) -> None:
     """Navigateur : bouton de téléchargement. Application de bureau : enregistrement direct dans
-    Documents/OpenPLS (les fenêtres intégrées gèrent mal les téléchargements)."""
+    Documents/OpenPLS (les fenêtres intégrées gèrent mal les téléchargements).
+    `on_click` : appelé quand l'utilisateur enregistre (ex. ajout aux projets récents)."""
     if not DESKTOP:
-        container.download_button(label, data, filename, mime=mime, key=key, width="stretch")
+        container.download_button(label, data, filename, mime=mime, key=key, width="stretch",
+                                  on_click=on_click or "rerun")
         return
     if container.button(label.replace("⬇", "💾", 1), key=key, width="stretch"):
+        if on_click:
+            on_click()
         stem, ext = os.path.splitext(filename)
         path = export_dir() / f"{stem}_{time.strftime('%Y-%m-%d_%H%M%S')}{ext}"
         path.write_bytes(data if isinstance(data, bytes) else str(data).encode("utf-8"))
@@ -244,15 +275,50 @@ def run_button(label: str, key: str) -> bool:
     return st.button(f"▶  {label}", key=key, type="primary")
 
 
+def cached_project(content: bytes) -> dict:
+    """Projet décodé, mémorisé pour la session (le décodage des résultats n'est fait qu'une fois)."""
+    import hashlib
+
+    from openpls.project import load_project
+
+    h = hashlib.sha256(content).hexdigest()
+    cache = st.session_state.setdefault("_proj_cache", {})
+    if h not in cache:
+        cache.clear()
+        cache[h] = load_project(content)
+    return cache[h]
+
+
+def open_project(name: str, content: bytes, remember: bool = True) -> None:
+    """Ouvre un projet (fichier importé, projet récent ou sauvegarde automatique) au prochain passage."""
+    st.session_state["_project"] = (name, content)
+    st.session_state["_carry"] = {"source": "project"}
+    st.session_state.pop("_proj_applied", None)
+    st.session_state.pop("_resume_offer", None)
+    if remember:
+        try:
+            from openpls.project import remember_recent
+
+            p = cached_project(content)
+            remember_recent(name, content, {"name": name, "date": time.strftime("%Y-%m-%d %H:%M"),
+                                            "rows": int(len(p["data"]))})
+        except Exception:  # noqa: BLE001 - la liste des récents est un confort, pas une nécessité
+            pass
+
+
 # ---------------------------------------------------------------- barre latérale
 if DESKTOP and st.sidebar.button(T("Quitter OpenPLS"), key="quit_app", type="tertiary"):
     st.sidebar.info(T("OpenPLS se ferme…"))
     os._exit(0)  # arrête le serveur ; la fenêtre de l'application se ferme d'elle-même
 
 st.sidebar.subheader(T("Données"))
-source = st.sidebar.radio("Source", ["example", "example_hoc", "file"], key="source", label_visibility="collapsed",
+_sources = ["example", "example_hoc", "file"] + (["project"] if st.session_state.get("_project") else [])
+if st.session_state.get("source") not in _sources:
+    st.session_state.pop("source", None)
+source = st.sidebar.radio("Source", _sources, key="source", label_visibility="collapsed",
                           format_func={"example": T("Données d'exemple"), "example_hoc": T("Exemple de second ordre"),
-                                       "file": T("Importer un fichier")}.get)
+                                       "file": T("Importer un fichier"),
+                                       "project": "📂 " + st.session_state.get("_project", ("",))[0]}.get)
 if source == "file":
     up = st.sidebar.file_uploader(T("CSV, Excel, SPSS, Stata ou projet OpenPLS"),
                                   type=["csv", "txt", "xlsx", "xls", "sav", "zsav", "dta", "openpls"])
@@ -269,22 +335,27 @@ if source == "file":
     import hashlib
 
     data_id = f"file:{up.name}:{hashlib.sha256(content).hexdigest()[:16]}"
-    if up.name.lower().endswith(".openpls"):  # projet : données + syntaxe + disposition + réglages
-        from openpls.project import load_project
+    if up.name.lower().endswith(".openpls"):  # projet : ouvert comme source « projet »
+        open_project(up.name, content)
+        st.rerun()
+    raw = read_file(content, up.name)
+elif source == "project":
+    _pname, _pcontent = st.session_state["_project"]
+    import hashlib
 
-        try:
-            proj = load_project(content)
-        except Exception as e:  # noqa: BLE001
-            st.error(T("Projet illisible : {e}", e=e))
-            st.stop()
-        raw = proj["data"]
-        if st.session_state.get("data_id") != data_id and st.session_state.get("_proj_applied") != data_id:
-            st.session_state["_proj_applied"] = data_id
-            st.session_state["_carry"] = proj.get("settings", {})  # réglages appliqués avant les widgets
-            st.session_state["_proj_model"] = (data_id, proj["syntax"], proj["editor_pos"])
-            st.rerun()
-    else:
-        raw = read_file(content, up.name)
+    data_id = f"project:{_pname}:{hashlib.sha256(_pcontent).hexdigest()[:16]}"
+    try:
+        proj = cached_project(_pcontent)
+    except Exception as e:  # noqa: BLE001
+        st.error(T("Projet illisible : {e}", e=e))
+        st.stop()
+    raw = proj["data"]
+    if st.session_state.get("_proj_applied") != data_id:  # première ouverture : modèle, réglages, résultats
+        st.session_state["_proj_applied"] = data_id
+        st.session_state["_carry"] = {**proj.get("settings", {}), "source": "project"}
+        st.session_state["_proj_model"] = (data_id, proj["syntax"], proj["editor_pos"])
+        st.session_state["_restore"] = (data_id, proj.get("results"))
+        st.rerun()
 elif source == "example_hoc":
     raw = simulate_higher_order(400, seed=21)
     data_id = "example_hoc"
@@ -498,6 +569,30 @@ with page_model:
         bar.empty()
 
 
+    # ---- projet ouvert avec ses résultats : ré-estimation (déterministe) puis bootstrap et analyses restaurés
+    _rs = st.session_state.get("_restore")
+    if _rs and _rs[0] == data_id and ok:
+        st.session_state.pop("_restore")
+        payload = _rs[1] or {}
+        if payload.get("fitted") and res is None:
+            try:
+                res = fit(data, model, **fit_kwargs)
+                st.session_state["results"] = (st.session_state["syntax"], fit_kwargs, res, data, data_key)
+            except Exception as e:  # noqa: BLE001
+                st.error(T("Échec de l'estimation : {e}", e=e))
+        if res is not None:
+            if payload.get("boot") and tuple(payload["boot"][:4]) == boot_key():
+                st.session_state["boot"] = boot_key() + (payload["boot"][4], payload["boot"][5], data_key)
+            if payload.get("jack") and tuple(payload["jack"][0]) == boot_key():
+                st.session_state["jack"] = (boot_key() + (data_key,), payload["jack"][1])
+            for name, (k, v) in (payload.get("adv") or {}).items():  # clés : données d'origine -> données actuelles
+                st.session_state.setdefault("adv", {})[name] = ((data_key,) + tuple(k[1:]), v)
+            if payload.get("page") is not None:
+                st.session_state["_goto"] = PAGES[min(int(payload["page"]), len(PAGES) - 1)]
+            st.rerun()
+    elif _rs and _rs[0] == data_id:
+        st.session_state.pop("_restore")
+
     if run and ok and res is not None and auto_boot:
         run_bootstrap()
     if run and ok and res is not None:
@@ -514,16 +609,74 @@ with page_model:
 
 # ---------------------------------------------------------------- projet (toujours disponible)
 st.sidebar.subheader(T("Projet"))
-from openpls.project import SETTINGS as _PSET, save_project
+from openpls import project as _pj
 
-_fname = up.name if source == "file" and up is not None else f"{data_id}.csv"
-offer_file("⬇  " + T("Enregistrer le projet (.openpls)"),
-           save_project(raw_original, _fname, st.session_state["syntax"], st.session_state.get("editor_pos"),
-                        {k: st.session_state[k] for k in _PSET if k in st.session_state}),
-           os.path.splitext(os.path.basename(_fname))[0] + ".openpls", key="dl_project",
-           mime="application/zip", container=st.sidebar)
-st.sidebar.caption(T("Données, modèle, disposition et réglages dans un seul fichier, à rouvrir avec « Importer "
-                     "un fichier »."))
+if source == "project":
+    _fname = st.session_state["_project"][0]
+elif source == "file" and up is not None:
+    _fname = up.name
+else:
+    _fname = {"example": T("exemple"), "example_hoc": T("exemple_second_ordre")}.get(data_id, data_id) + ".csv"
+_pname = os.path.splitext(os.path.basename(_fname))[0] + ".openpls"
+
+
+def _results_payload() -> dict:
+    """Résultats de l'analyse en cours (les clés des données sont réécrites à la réouverture)."""
+    out = {"fitted": res is not None, "page": PAGES.index(st.session_state["page"])
+           if st.session_state.get("page") in PAGES else 0}
+    b = st.session_state.get("boot")
+    if b and b[6] == data_key:
+        out["boot"] = tuple(b[:6])
+    jk = st.session_state.get("jack")
+    if jk and jk[0][-1] == data_key:
+        out["jack"] = (tuple(jk[0][:-1]), jk[1])
+    adv = {n: (k, v) for n, (k, v) in st.session_state.get("adv", {}).items() if k and k[0] == data_key}
+    if adv:
+        out["adv"] = adv
+    return out
+
+
+def _project_section(slot) -> None:
+    """Projet à enregistrer (et sauvegarde automatique) : appelé en fin de passage, quand tous les résultats
+    de ce passage sont connus."""
+    _settings_now = {k: st.session_state[k] for k in _pj.SETTINGS if k in st.session_state}
+    _sig = (data_key, st.session_state["syntax"], repr(sorted(_settings_now.items())),
+            repr(sorted((st.session_state.get("editor_pos") or {}).items())), res is not None,
+            id(st.session_state.get("boot")), id(st.session_state.get("jack")),
+            tuple((n, id(v)) for n, v in st.session_state.get("adv", {}).items()), st.session_state.get("page"))
+    if st.session_state.get("_proj_blob", (None,))[0] != _sig:
+        try:
+            _blob = _pj.save_project(raw_original, _fname, st.session_state["syntax"], st.session_state.get("editor_pos"),
+                                     _settings_now, _results_payload())
+        except Exception:  # noqa: BLE001 - résultat non sérialisable : on garde au moins données et modèle
+            _blob = _pj.save_project(raw_original, _fname, st.session_state["syntax"],
+                                     st.session_state.get("editor_pos"), _settings_now)
+        st.session_state["_proj_blob"] = (_sig, _blob)
+        # sauvegarde automatique : seulement un vrai travail (fichier importé, projet, ou résultats calculés)
+        if load_prefs().get("autosave", True) and (source in ("file", "project") or res is not None) \
+                and not st.session_state.get("_resume_offer"):
+            try:
+                _pj.write_autosave(_blob, {"name": _pname, "date": time.strftime("%Y-%m-%d %H:%M"),
+                                           "rows": int(len(raw_original)), "results": res is not None})
+            except OSError:
+                pass
+    _blob = st.session_state["_proj_blob"][1]
+    _info = {"name": _pname, "date": time.strftime("%Y-%m-%d %H:%M"), "rows": int(len(raw_original))}
+    offer_file("⬇  " + T("Enregistrer le projet (.openpls)"), _blob, _pname, key="dl_project", mime="application/zip",
+               container=slot, on_click=lambda: _pj.remember_recent(_pname, _blob, _info))
+    slot.caption(T("Données, modèle, disposition, réglages et résultats dans un seul fichier, à rouvrir avec "
+                         "« Importer un fichier »."))
+
+
+_project_slot = st.sidebar.container()
+_recent = _pj.list_recent()
+if _recent:
+    with st.sidebar.expander(T("Projets récents")):
+        for _i, _it in enumerate(_recent):
+            st.button(f"📂 {_it['name']}", key=f"recent_{_i}", help=T("{d}, {n} lignes", d=_it.get("date", ""),
+                                                                         n=_it.get("rows", "?")),
+                      on_click=lambda it=_it: open_project(it["name"], _pj.read_recent(it)), width="stretch",
+                      type="tertiary")
 
 with page_prelim:
     from openpls import page_prelim as _prelim
@@ -536,6 +689,7 @@ with page_help:
     _help.render()
 
 if res is None:
+    _project_section(_project_slot)  # rien d'autre ne sera calculé dans ce passage
     for _p in (page_res, page_sig, page_adv):
         _p.info(T("Clique sur « ▶ Estimer le modèle » dans l'onglet **Modèle** pour afficher les résultats."))
     st.stop()
@@ -1379,3 +1533,6 @@ offer_file("⬇  " + T("Script Python (reproductible)"),
            python_script(st.session_state["syntax"], up.name if source == "file" and up is not None else "donnees.csv",
                          fit_kwargs, missing, int(n_boot), seed),
            T("analyse_openpls.py"), key="dl_py", container=st.sidebar)
+
+# projet et sauvegarde automatique : en dernier, pour inclure les analyses lancées dans ce passage
+_project_section(_project_slot)

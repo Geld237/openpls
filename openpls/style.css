@@ -165,3 +165,5 @@ dl.opls-summary > div {
 }
 /* le menu, sorti du flux, laisse un écart vertical : la barre d'onglets le reprend */
 .st-key-page { margin-top: -1rem; }
+/* bandeau « Reprendre le travail » : sous le menu du haut */
+.st-key-resume { margin-top: calc(var(--bar-h) + 0.5rem); }

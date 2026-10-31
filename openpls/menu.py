@@ -105,6 +105,17 @@ def settings() -> None:
     st.number_input(T("Échantillons bootstrap par défaut"), 100, 20000, key="set_nboot", step=500,
                     on_change=lambda: save_pref("n_boot", int(st.session_state["set_nboot"])),
                     help=T("Valeur proposée au démarrage. 5 000 est recommandé pour les résultats publiés."))
+    st.session_state["set_autosave"] = bool(load_prefs().get("autosave", True))
+    st.toggle(T("Sauvegarde automatique du travail en cours"), key="set_autosave",
+              on_change=lambda: save_pref("autosave", bool(st.session_state["set_autosave"])),
+              help=T("Une copie du projet (données comprises) est gardée sur cet ordinateur ; au démarrage, OpenPLS "
+                     "propose de reprendre là où tu t'étais arrêté."))
+    if st.button(T("Effacer la sauvegarde automatique et les projets récents")):
+        from .project import clear_history
+
+        clear_history()
+        st.session_state.pop("_resume_offer", None)
+        st.success(T("Historique effacé."))
     st.caption(T("Les réglages sont enregistrés sur cet ordinateur et repris au prochain lancement."))
     if st.button(T("Fermer"), type="primary"):
         st.rerun()

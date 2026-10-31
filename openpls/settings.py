@@ -23,7 +23,7 @@ _POINT_LANGS = ("en", "english", "zh", "chinese", "ja", "japanese", "ko", "korea
 
 
 def _prefs_path() -> Path:
-    return Path.home() / ".openpls" / "settings.json"
+    return Path(os.environ.get("OPENPLS_HOME") or (Path.home() / ".openpls")) / "settings.json"
 
 
 def load_prefs() -> dict:

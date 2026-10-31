@@ -470,3 +470,39 @@ def test_exports_report_project_script_and_diagram(tmp_path):
     raw.to_csv(tmp_path / "d.csv", index=False)
     code = python_script(SYNTAX, str(tmp_path / "d.csv"), {"scheme": "path"}, "listwise", 50, 1)
     exec(compile(code, "script", "exec"), {"__name__": "__main__"})
+
+
+def test_project_with_results_autosave_and_recent(tmp_path, monkeypatch):
+    from openpls import project as pj
+
+    monkeypatch.setenv("OPENPLS_HOME", str(tmp_path))
+    at = _app(auto_boot=True)
+    at.session_state["n_boot"] = 100
+    at.run()
+    _btn(at, "Estimer").click().run()
+    at.radio(key="adv_choice").set_value("Conditions nécessaires (NCA)").run()
+    at.number_input(key="nca_np").set_value(100).run()
+    _btn(at, "Lancer la NCA").click().run()
+    assert not at.exception, at.exception
+    blob = at.session_state["_proj_blob"][1]
+    proj = pj.load_project(blob)
+    assert proj["results"]["fitted"] and "boot" in proj["results"] and "nca" in proj["results"]["adv"]
+    assert (tmp_path / "autosave.openpls").is_file()  # sauvegarde automatique (résultats calculés)
+
+    # nouvelle session : la reprise est proposée, puis restaure résultats, bootstrap et NCA sans recalcul
+    at2 = _app().run()
+    assert any("Reprendre le travail en cours" in m.value for m in at2.markdown)
+    _btn(at2, "Reprendre").click().run()
+    assert not at2.exception, at2.exception
+    assert at2.session_state["source"] == "project"
+    assert at2.session_state["page"] == "Résultats"
+    assert "Coefficients de chemin" in [s.value for s in at2.subheader]
+    paths = next(df.value for df in at2.dataframe if df.value.index.name == "chemin")
+    assert "t" in paths.columns  # bootstrap restauré
+    assert any(n == "nca" for n in at2.session_state["adv"])
+
+    # projets récents
+    pj.remember_recent("a.openpls", blob, {"name": "a.openpls", "date": "2026-10-31 10:00", "rows": 450})
+    assert pj.list_recent()[0]["name"] == "a.openpls" and pj.read_recent(pj.list_recent()[0]) == blob
+    pj.clear_history()
+    assert not pj.list_recent() and pj.read_autosave() is None

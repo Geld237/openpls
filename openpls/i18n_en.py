@@ -735,3 +735,22 @@ EN.update({
 EN["Rapport Word indisponible : {e}"] = "Word report unavailable: {e}"
 EN["Lecture SPSS/Stata indisponible : installe le module pyreadstat (pip install pyreadstat), ou enregistre le fichier en CSV."] = \
     "SPSS/Stata import unavailable: install the pyreadstat module (pip install pyreadstat), or save the file as CSV."
+
+EN.update({
+    "exemple": "example", "exemple_second_ordre": "second_order_example",
+    "Données, modèle, disposition, réglages et résultats dans un seul fichier, à rouvrir avec « Importer un fichier ».":
+        "Data, model, layout, settings and results in a single file, to reopen with “Import a file”.",
+    "Projets récents": "Recent projects",
+    "{d}, {n} lignes": "{d}, {n} rows",
+    "**Reprendre le travail en cours ?** {name}, enregistré automatiquement le {d} ({n} lignes{r}).":
+        "**Resume your work?** {name}, saved automatically on {d} ({n} rows{r}).",
+    ", avec résultats": ", with results",
+    "Reprendre": "Resume", "Ignorer": "Dismiss",
+    "Sauvegarde automatique du travail en cours": "Automatically save work in progress",
+    "Une copie du projet (données comprises) est gardée sur cet ordinateur ; au démarrage, OpenPLS propose de reprendre "
+    "là où tu t'étais arrêté.":
+        "A copy of the project (including data) is kept on this computer; at start-up, OpenPLS offers to resume "
+        "where you left off.",
+    "Effacer la sauvegarde automatique et les projets récents": "Clear the automatic save and recent projects",
+    "Historique effacé.": "History cleared.",
+})
