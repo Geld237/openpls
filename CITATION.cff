@@ -4,7 +4,7 @@ title: "OpenPLS : PLS-SEM libre et open source"
 type: software
 authors:
   - name: "Les contributeurs d'OpenPLS"
-version: 0.6.0
+version: 0.8.0
 date-released: 2026-10-30
 license: MIT
 repository-code: "https://github.com/Geld237/openpls"

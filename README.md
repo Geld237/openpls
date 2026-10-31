@@ -4,7 +4,7 @@ Implémentation **libre et open source** du PLS-SEM (*Partial Least Squares Stru
 
 Le code est une **réimplémentation indépendante, écrite à partir de la littérature scientifique publiée**. Il ne contient aucun code, fichier ni ressource d'un logiciel propriétaire.
 
-## Fonctionnalités (v0.7)
+## Fonctionnalités (v0.8)
 
 | | |
 |---|---|
@@ -15,8 +15,12 @@ Le code est une **réimplémentation indépendante, écrite à partir de la litt
 | Validité discriminante | HTMT, Fornell-Larcker |
 | Modèle structurel | Coefficients de chemin, R², f², effets totaux |
 | Médiation | Effets indirects spécifiques (y compris en série), indirects totaux, typologie de Zhao et al. (2010) |
-| Inférence | Bootstrap automatique à l'estimation : erreur-type, t, p, IC percentiles et étoiles sur les chemins, chargements, poids et effets ; diagramme coloré (bleu/rouge = significatif, gris pointillé = non significatif) |
-| Modération | Termes d'interaction `X:M` : deux étapes, produit des indicateurs, orthogonalisation ; pentes simples |
+| Inférence | Bootstrap (facultatif) : erreur-type, t, p, IC percentiles ou **BCa**, étoiles (1 %, 5 %, 10 %) ; test de la différence entre deux coefficients |
+| Modération | Termes d'interaction `X:M` et effets quadratiques `X:X` : deux étapes, produit des indicateurs, orthogonalisation ; pentes simples ; **indice de médiation modérée** (Hayes 2015) et effets indirects conditionnels |
+| Variables de contrôle | `Y ~ X + age` : construit à un indicateur ; colonne texte : indicatrices 0/1 |
+| Données | CSV, Excel, **SPSS (.sav)**, **Stata (.dta)** ; valeurs manquantes : suppression par liste, moyenne, imputation par régression |
+| Analyses préliminaires | Descriptives, manquants, Mahalanobis, Mardia, corrélations, Harman, colinéarité complète, taille d'échantillon minimale ; figures PNG/SVG |
+| Choix de modèle | Comparaison de modèles concurrents (AIC, BIC, HQ, GM, poids) ; **CTA-PLS** (réflectif ou formatif ?) |
 | Ordre supérieur | Construits de second ordre réflectifs ou formatifs : deux étapes (disjointe, intégrée), indicateurs répétés ; chargements, poids, VIF, fiabilité du construit |
 | Prédiction | PLSpredict (Q²_predict, RMSE, MAE vs régression linéaire), CVPAT |
 | Multigroupe | 2 groupes : permutation, PLS-MGA de Henseler, Welch. k groupes : test omnibus par permutation et comparaisons par paires corrigées par Holm. Invariance de mesure MICOM (étapes 1 à 3) |
@@ -26,7 +30,8 @@ Le code est une **réimplémentation indépendante, écrite à partir de la litt
 | CB-SEM / CFA | Maximum de vraisemblance, y compris second ordre ; χ², CFI, TLI, RMSEA (+ IC 90 %), SRMR, AIC, BIC |
 | Segmentation | FIMIX-PLS, critères AIC3/AIC4/BIC/CAIC/EN |
 | Application | Fenêtre native sous Windows et macOS, sans terminal ni navigateur ; installateurs fournis |
-| Interface graphique | Éditeur de modèle par glisser-déposer, diagramme en direct, toutes les analyses ci-dessus, tableaux colorés selon les seuils, export Excel |
+| Interface graphique | Français ou anglais (selon l'installation), éditeur par glisser-déposer, diagramme en direct, aide intégrée par rubriques, recherche de mises à jour |
+| Exports | Excel, **rapport Word au format APA**, diagramme PNG/SVG/DOT, **projet .openpls** (données + modèle + réglages), **script Python** reproductible |
 
 [![Tests](https://github.com/Geld237/openpls/actions/workflows/tests.yml/badge.svg)](https://github.com/Geld237/openpls/actions/workflows/tests.yml)
 

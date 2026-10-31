@@ -1363,7 +1363,10 @@ if st.session_state.get("_report", (None,))[0] != _rkey:
         st.session_state["_report"] = (_rkey, build_report(_info, _tables, _png))
     except Exception as _e:  # noqa: BLE001
         st.session_state["_report"] = (_rkey, None)
-if st.session_state["_report"][1]:
+        st.session_state["_report_error"] = repr(_e)
+if not st.session_state["_report"][1]:
+    st.sidebar.caption(T("Rapport Word indisponible : {e}", e=st.session_state.get("_report_error", "")))
+else:
     offer_file("⬇  " + T("Rapport (Word)"), st.session_state["_report"][1], T("rapport_openpls.docx"), key="dl_docx",
                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", container=st.sidebar)
 

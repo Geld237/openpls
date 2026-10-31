@@ -42,7 +42,7 @@ with sync_playwright() as p:
     assert f"{new} =~ eta2_3" in syntax and f"{new} ~ ETA1" in syntax, syntax
 
     # 2. second ordre : refus d'un chemin depuis une composante, syntaxe conservée
-    pg.get_by_text("Exemple de second ordre").click()
+    pg.get_by_text("Exemple de second ordre", exact=True).click()
     time.sleep(4)
     assert pg.get_by_role("button", name="Estimer le modèle").is_enabled(), \
         "changement de données : l'ancienne syntaxe de l'éditeur a été réappliquée"
@@ -75,7 +75,7 @@ with sync_playwright() as p:
     (tmp / "v1").mkdir(); (tmp / "v2").mkdir()
     simulate(300, seed=1).to_csv(tmp / "v1" / "enquete.csv", index=False)
     simulate(300, seed=2, eta_path=-0.2).to_csv(tmp / "v2" / "enquete.csv", index=False)
-    pg.get_by_text("Importer un fichier").click(); time.sleep(3)
+    pg.get_by_text("Importer un fichier", exact=True).click(); time.sleep(3)
     pg.set_input_files("input[type=file]", str(tmp / "v1" / "enquete.csv")); time.sleep(5)
     pg.get_by_role("tab", name="Syntaxe").click()
     model_txt = "XI1 =~ xi1_1 + xi1_2 + xi1_3\nETA1 =~ eta1_1 + eta1_2 + eta1_3\nETA1 ~ XI1"

@@ -732,3 +732,4 @@ EN.update({
     "0,02 faible ; 0,15 moyen ; 0,35 fort (Cohen, 1988).": "0.02 small; 0.15 medium; 0.35 large (Cohen, 1988).",
     "Figure 1": "Figure 1", "Modèle estimé": "Estimated model", "Références": "References",
 })
+EN["Rapport Word indisponible : {e}"] = "Word report unavailable: {e}"
