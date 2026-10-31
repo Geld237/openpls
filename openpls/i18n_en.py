@@ -681,10 +681,10 @@ EN.update({
         "measurement (Gudergan et al. 2008).",
     "Lancer la CTA-PLS": "Run CTA-PLS",
     "Bootstrap des tétrades…": "Bootstrapping tetrads…",
-    "Intervalles bootstrap corrigés par Bonferroni sur les k(k−3)/2 tétrades non redondantes. « non » : au moins une "
+    "Intervalles bootstrap corrigés par Bonferroni sur l'ensemble des tétrades testées du bloc. « non » : au moins une "
     "tétrade diffère de 0, le modèle réflectif est rejeté. Le choix réflectif/formatif doit d'abord reposer sur la "
     "théorie.":
-        "Bootstrap intervals Bonferroni-adjusted over the k(k−3)/2 non-redundant tetrads. “no”: at least one tetrad "
+        "Bootstrap intervals Bonferroni-adjusted over all tetrads tested in the block. “no”: at least one tetrad "
         "differs from 0, the reflective model is rejected. The reflective/formative choice should rest on theory first.",
     "Détail des tétrades": "Tetrad details",
     "prédicteurs": "predictors", "poids AIC": "AIC weight", "poids BIC": "BIC weight",
@@ -753,4 +753,62 @@ EN.update({
         "where you left off.",
     "Effacer la sauvegarde automatique et les projets récents": "Clear the automatic save and recent projects",
     "Historique effacé.": "History cleared.",
+})
+
+# ---------------------------------------------------------------- erreurs de syntaxe et avertissements du bootstrap
+PATTERNS += [
+    (re.compile(r"^L'indicateur (\S+) apparaît deux fois dans (\S+) : .*$", re.S),
+     r"Indicator \1 appears twice in \2: an indicator can measure only one construct (for a higher-order construct, "
+     r"use the syntax HOC =~ LV1 + LV2)"),
+    (re.compile(r"^L'indicateur (\S+) apparaît dans (\S+) et dans (\S+) : .*$", re.S),
+     r"Indicator \1 appears in \2 and in \3: an indicator can measure only one construct (for a higher-order "
+     r"construct, use the syntax HOC =~ LV1 + LV2)"),
+    (re.compile(r"^(\S+) ne peut pas avoir à la fois des indicateurs et des composantes$"),
+     r"\1 cannot have both indicators and components"),
+    (re.compile(r"^Le construit d'ordre supérieur (\S+) doit avoir au moins 2 composantes$"),
+     r"Higher-order construct \1 must have at least 2 components"),
+    (re.compile(r"^(\S+) : la composante (\S+) doit être une variable latente d'ordre 1 .*$", re.S),
+     r"\1: component \2 must be a first-order latent variable (third-order models are not supported)"),
+    (re.compile(r"^(\S+) est composante de deux construits \((\S+) et (\S+)\)$"),
+     r"\1 is a component of two constructs (\2 and \3)"),
+    (re.compile(r"^Chemin (\S+) -> (\S+) : (\S+) est une composante de (\S+) ; relie plutôt (\S+) aux autres construits$"),
+     r"Path \1 -> \2: \3 is a component of \4; connect \5 to the other constructs instead"),
+    (re.compile(r"^Les interactions impliquant un construit d'ordre supérieur ou ses composantes ne sont pas prises en "
+                r"charge$"), "Interactions involving a higher-order construct or its components are not supported"),
+    (re.compile(r"^Chemin (\S+) -> (\S+) : variable latente inconnue$"), r"Path \1 -> \2: unknown latent variable"),
+    (re.compile(r"^Boucle sur (\S+) interdite$"), r"Self-loop on \1 is not allowed"),
+    (re.compile(r"^Mode inconnu pour (\S+) : (.+)$"), r"Unknown mode for \1: \2"),
+    (re.compile(r"^(\S+) n'a aucun indicateur$"), r"\1 has no indicator"),
+    (re.compile(r"^Interaction (\S+) -> (\S+) : variable latente inconnue (\S+)$"),
+     r"Interaction \1 -> \2: unknown latent variable \3"),
+    (re.compile(r"^Interaction (\S+) -> (\S+) : ajoute aussi les effets simples \((.+)\)$"),
+     r"Interaction \1 -> \2: also add the simple effects (\3)"),
+    (re.compile(r"^Le modèle structurel contient un cycle$"), "The structural model contains a cycle"),
+    (re.compile(r"^Ligne (\d+) : opérateur manquant \(=~, <~ ou ~\) : (.+)$"),
+     r"Line \1: missing operator (=~, <~ or ~): \2"),
+    (re.compile(r"^Ligne (\d+) : syntaxe invalide : (.+)$"), r"Line \1: invalid syntax: \2"),
+    (re.compile(r"^Ligne (\d+) : (\S+) est déjà défini$"), r"Line \1: \2 is already defined"),
+    (re.compile(r"^Ligne (\d+) : interaction invalide (.+) \(forme attendue X:M\)$"),
+     r"Line \1: invalid interaction \2 (expected form X:M)"),
+    (re.compile(r"^Aucune variable latente définie \(utilise =~ ou <~\)$"), "No latent variable defined (use =~ or <~)"),
+    (re.compile(r"^Ligne (\S+) : (\S+) mélange indicateurs et variables latentes$"),
+     r"Line \1: \2 mixes indicators and latent variables"),
+    (re.compile(r"^(\d+)/(\d+) tirages en échec ont été exclus : .*?( \(inférence NON fiable\))?$", re.S),
+     lambda m: f"{m.group(1)}/{m.group(2)} failed draws were excluded: the remaining draws are not representative, "
+               f"standard errors and intervals may be biased" + (" (inference NOT reliable)" if m.group(3) else "")),
+    (re.compile(r"^(\d+)/(\d+) tirages ont un coefficient ou un chargement > 1 en valeur absolue .*$", re.S),
+     r"\1/\2 draws have a coefficient or loading > 1 in absolute value (inadmissible solution, common with PLSc "
+     r"and small samples)"),
+    (re.compile(r"^(\d+)/(\d+) tirages en échec \(jackknife\)$"), r"\1/\2 failed jackknife subsamples"),
+]
+
+EN.update({
+    "Les résultats enregistrés ne correspondent pas aux données du projet : ils ont été ignorés. Estime à nouveau le "
+    "modèle.": "The saved results do not match the project data: they were ignored. Estimate the model again.",
+    "Projet créé avec une autre version d'OpenPLS : les résultats enregistrés ont été ignorés pour éviter toute "
+    "différence. Estime à nouveau le modèle.":
+        "Project created with another version of OpenPLS: the saved results were ignored to avoid any discrepancy. "
+        "Estimate the model again.",
+    "Les résultats enregistrés sont illisibles : données et modèle ont été ouverts, estime à nouveau le modèle.":
+        "The saved results are unreadable: data and model were opened; estimate the model again.",
 })

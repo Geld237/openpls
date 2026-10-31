@@ -74,9 +74,12 @@ def mardia(x: np.ndarray) -> dict:
     xc = x - x.mean(axis=0)
     s = np.cov(xc, rowvar=False, bias=True)
     s_inv = np.linalg.pinv(s)
-    d = xc @ s_inv @ xc.T
-    b1 = (d ** 3).sum() / n ** 2
-    b2 = (np.diag(d) ** 2).mean()
+    y = xc @ s_inv  # par blocs : la matrice n × n complète coûterait O(n²) en mémoire
+    b1 = 0.0
+    for start in range(0, n, 1000):
+        b1 += float(((y[start:start + 1000] @ xc.T) ** 3).sum())
+    b1 /= n ** 2
+    b2 = float((np.einsum("ij,ij->i", y, xc) ** 2).mean())
     k1 = n * b1 / 6
     df1 = p * (p + 1) * (p + 2) / 6
     z2 = (b2 - p * (p + 2)) / np.sqrt(8 * p * (p + 2) / n)
@@ -123,6 +126,8 @@ def ten_times_rule(model: Model) -> int:
     arrows = [len(model.measurement.get(lv, [])) for lv in model.latents if model.modes.get(lv) == "B"]
     preds: dict[str, int] = {}
     for _, d in model.structural:
+        preds[d] = preds.get(d, 0) + 1
+    for *_, d in getattr(model, "interactions", []):  # le terme d'interaction est une flèche de plus
         preds[d] = preds.get(d, 0) + 1
     arrows += list(preds.values())
     return 10 * max(arrows, default=1)

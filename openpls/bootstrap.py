@@ -132,18 +132,23 @@ def jackknife(data: pd.DataFrame, model, statistic, max_groups: int = 200, progr
     from .algorithm import fit
 
     n = len(data)
-    groups = np.array_split(np.arange(n), min(n, max_groups))
+    # groupes tirés au hasard (graine fixe) : des données triées ne biaisent pas l'accélération
+    groups = np.array_split(np.random.default_rng(0).permutation(n), min(n, max_groups))
     est_index = statistic(fit(data, model, **fit_kwargs)).index
-    out = []
+    out, failures = [], 0
     for i, g in enumerate(groups):
         keep = np.setdiff1d(np.arange(n), g)
         try:
             out.append(statistic(fit(data.iloc[keep].reset_index(drop=True), model, **fit_kwargs))
                        .reindex(est_index).to_numpy())
         except Exception:  # noqa: BLE001 - un échec isolé ne bloque pas le calcul
-            pass
+            failures += 1
         if progress:
             progress(i + 1, len(groups))
+    if failures:
+        import warnings
+
+        warnings.warn(f"{failures}/{len(groups)} tirages en échec (jackknife)", stacklevel=2)
     return np.array(out)
 
 

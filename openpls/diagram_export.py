@@ -115,9 +115,17 @@ def render(dot: str, fmt: str = "png") -> bytes:
 def python_script(syntax: str, file_name: str, fit_kwargs: dict, missing: str, n_boot: int, seed: int) -> str:
     """Script Python qui refait l'analyse avec la bibliothèque openpls (reproductibilité)."""
     kw = ", ".join(f"{k}={v!r}" for k, v in fit_kwargs.items())
-    reader = ("pd.read_excel" if file_name.lower().endswith((".xlsx", ".xls")) else
-              "pd.read_spss" if file_name.lower().endswith((".sav", ".zsav")) else
-              "pd.read_stata" if file_name.lower().endswith(".dta") else "pd.read_csv")
+    low = file_name.lower()
+    if low.endswith((".xlsx", ".xls")):
+        read = f"raw = pd.read_excel({file_name!r})"
+    elif low.endswith((".sav", ".zsav")):
+        read = f"raw = pd.read_spss({file_name!r})"
+    elif low.endswith(".dta"):
+        read = f"raw = pd.read_stata({file_name!r})"
+    else:  # comme OpenPLS : séparateur détecté, virgule décimale reconnue
+        read = (f"raw = pd.read_csv({file_name!r}, sep=None, engine=\"python\")\n"
+                f"if raw.select_dtypes(\"number\").shape[1] == 0:\n"
+                f"    raw = pd.read_csv({file_name!r}, sep=None, engine=\"python\", decimal=\",\")")
     return f'''"""Analyse OpenPLS reproductible (générée par OpenPLS).
 
 Installation : pip install openpls   (ou depuis https://github.com/Geld237/openpls)
@@ -129,10 +137,10 @@ from openpls.assessment import measurement_statistics
 from openpls.effects import effect_statistics
 from openpls.gui_helpers import add_dummy_columns, prepare_data
 
-SYNTAX = """{syntax.strip()}
-"""
+SYNTAX = {syntax.strip() + chr(10)!r}
 
-raw = {reader}({file_name!r})          # adapte le chemin du fichier
+# adapte le chemin du fichier
+{read}
 raw = add_dummy_columns(raw.rename(columns=str), SYNTAX)
 model = Model.from_syntax(SYNTAX)
 data, notes = prepare_data(raw, model, missing="{missing}")

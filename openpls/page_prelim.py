@@ -177,6 +177,7 @@ def render(raw: pd.DataFrame, model, res, numeric_cols: list[str], fmt, flag, of
                      "(300 ppp) pour Word ou en SVG pour une mise en page vectorielle."))
 
     st.session_state["prelim_sheets"] = sheets
-    xlsx = _cached(("xlsx", tuple(cols), st.session_state.get("corr_m"), res is not None), lambda: to_excel(sheets))
+    fp = None if res is None else (id(res), tuple(res.scores.columns))  # résultats d'une autre estimation
+    xlsx = _cached(("xlsx", tuple(cols), st.session_state.get("corr_m"), fp), lambda: to_excel(sheets))
     offer_file("⬇  " + T("Analyses préliminaires (Excel)"), xlsx, T("openpls_preliminaires.xlsx"),
                key="dl_prelim", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

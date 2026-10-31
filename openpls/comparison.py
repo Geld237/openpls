@@ -26,16 +26,16 @@ def information_criteria(results: dict, target: str) -> pd.DataFrame:
         p = int(sum(1 for s, d in sv.model.structural if d == target)
                 + sum(1 for *_, d in getattr(sv.model, "interactions", []) if d == target))
         sse = (1 - r2) * (n - 1)  # scores standardisés : variance totale n - 1
-        rows[name] = {"R²": r2, "prédicteurs": p, "n": n, "SSE": sse}
+        rows[name] = {"R²": r2, "prédicteurs": p, "n": n, "SSE": sse}  # paramètres : prédicteurs + constante
     tbl = pd.DataFrame(rows).T
     n = tbl["n"].astype(float)
     ll = n * np.log(tbl["SSE"].astype(float) / n)
-    p = tbl["prédicteurs"].astype(float)
+    p = tbl["prédicteurs"].astype(float) + 1  # Sharma et al. (2019) : p_k = prédicteurs + constante
     tbl["AIC"] = ll + 2 * p
     tbl["BIC"] = ll + p * np.log(n)
     tbl["HQ"] = ll + 2 * p * np.log(np.log(n))
     full = tbl["prédicteurs"].astype(float).idxmax()  # σ² du modèle le plus général
-    sigma2 = float(tbl.loc[full, "SSE"]) / max(float(tbl.loc[full, "n"]) - float(tbl.loc[full, "prédicteurs"]) - 1, 1)
+    sigma2 = float(tbl.loc[full, "SSE"]) / max(float(tbl.loc[full, "n"]) - float(tbl.loc[full, "prédicteurs"]) - 1, 1)  # noqa: E501
     tbl["GM"] = tbl["SSE"].astype(float) / sigma2 + p * np.log(n)
     for crit in ("AIC", "BIC"):
         delta = tbl[crit] - tbl[crit].min()
@@ -58,9 +58,10 @@ def _tetrads(cov: np.ndarray, quads: list[tuple]) -> np.ndarray:
 def cta(data: pd.DataFrame, model, n_boot: int = 1000, alpha: float = 0.10, seed: int = 0,
         progress=None) -> dict:
     """CTA-PLS pour chaque bloc d'au moins 4 indicateurs. Pour chaque quadruplet d'indicateurs, deux tétrades
-    (la troisième s'en déduit) ; intervalles bootstrap percentiles corrigés par Bonferroni (nombre de tétrades
-    non redondantes k(k−3)/2). Le modèle réflectif est compatible avec les données si tous les intervalles
-    contiennent 0 (Gudergan et al. 2008, seuil 10 % recommandé)."""
+    (la troisième s'en déduit) ; intervalles bootstrap percentiles corrigés par Bonferroni sur le nombre de
+    tétrades réellement testées dans le bloc (2 × C(k, 4)), ce qui garde le taux de rejet à tort sous le seuil.
+    Le modèle réflectif est compatible avec les données si tous les intervalles contiennent 0
+    (Gudergan et al. 2008, seuil 10 % recommandé)."""
     rng = np.random.default_rng(seed)
     blocks = {lv: inds for lv, inds in model.measurement.items() if len(inds) >= 4}
     if not blocks:
@@ -78,11 +79,14 @@ def cta(data: pd.DataFrame, model, n_boot: int = 1000, alpha: float = 0.10, seed
             draws[r] = _tetrads(np.cov(x[idx], rowvar=False), quads)
             if progress and r % 50 == 0:
                 progress((b_i + r / n_boot) / len(blocks))
-        k = len(inds)
-        m_nonred = k * (k - 3) // 2
-        a_adj = alpha / m_nonred
-        lo, hi = np.percentile(draws, [100 * a_adj / 2, 100 * (1 - a_adj / 2)], axis=0)
+        a_adj = alpha / len(est)  # Bonferroni sur toutes les tétrades testées
         se = draws.std(axis=0, ddof=1)
+        # intervalle normal (erreur-type bootstrap) : les percentiles extrêmes qu'impose Bonferroni
+        # seraient très mal estimés avec quelques centaines de tirages (rejets à tort trop fréquents)
+        from scipy import stats as _st
+
+        z = _st.norm.ppf(1 - a_adj / 2)
+        lo, hi = est - z * se, est + z * se
         names = []
         for g, h, i, j in quads:
             a, b, c, d = (inds[q] for q in (g, h, i, j))

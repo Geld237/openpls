@@ -67,3 +67,47 @@ def test_imputation_and_spss_import(tmp_path):
 
     df, meta = pyreadstat.read_sav(str(path))
     assert list(df.columns) == ["a", "b", "c"] and meta.column_labels[0] == "item a"
+
+
+def test_audit_regressions_mardia_ten_times_and_project_types():
+    import hashlib  # noqa: F401
+    import io
+    import json
+    import zipfile
+
+    from openpls import project as pj
+
+    rng = np.random.default_rng(0)
+    big = rng.normal(size=(20000, 8))
+    mm = ds.mardia(big)  # par blocs : pas de matrice 20000 × 20000 (3 Go)
+    assert 0 <= mm["p asymétrie"] <= 1
+    m = Model.from_syntax("X =~ x1\nM =~ m1\nY =~ y1\nY ~ X + M + X:M")
+    assert ds.ten_times_rule(m) == 30
+
+    raw = pd.DataFrame({"code": ["001", "002", "NA"], "site": ["1", "2", "1"], "x": [0.1 + 0.2, 1 / 3, np.nan]})
+    blob = pj.save_project(raw, "t.csv", "A =~ x", {}, {}, {"fitted": True})
+    p = pj.load_project(blob)
+    assert p["data"]["code"].tolist() == ["001", "002", "NA"] and p["data"]["site"].tolist() == ["1", "2", "1"]
+    assert p["data"]["x"].iloc[0] == raw["x"].iloc[0]  # flottant relu à l'identique
+    assert p["results"] is not None
+    # données modifiées dans le fichier : résultats ignorés, projet quand même ouvert
+    zin = zipfile.ZipFile(io.BytesIO(blob))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in zin.namelist():
+            data = zin.read(n)
+            if n == "data.csv":
+                data = data.replace(b"001", b"009")
+            if n == "results.json" and False:
+                data = b""
+            z.writestr(n, data)
+    p2 = pj.load_project(buf.getvalue())
+    assert p2["results"] is None and p2["results_note"] == "data" and len(p2["data"]) == 3
+    # résultats illisibles : projet ouvert quand même
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for n in zin.namelist():
+            z.writestr(n, b"{pas du json" if n == "results.json" else zin.read(n))
+    p3 = pj.load_project(buf.getvalue())
+    assert p3["results"] is None and p3["results_note"] == "unreadable"
+    assert json.loads(zin.read("project.json"))["dtypes"]["code"] in ("object", "str", "string")

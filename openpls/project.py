@@ -16,25 +16,62 @@ SETTINGS = ("algo", "scheme", "moderation", "hoc_method", "missing", "n_boot", "
 
 def save_project(raw: pd.DataFrame, file_name: str, syntax: str, positions: dict | None, settings: dict,
                  results: dict | None = None) -> bytes:
+    import hashlib
+
+    csv = raw.to_csv(index=False).encode("utf-8")
     meta = {"openpls": __version__, "file_name": file_name, "syntax": syntax,
             "editor_pos": {k: list(v) for k, v in (positions or {}).items()},
             "settings": {k: settings[k] for k in SETTINGS if k in settings},
-            "labels": raw.attrs.get("labels", {})}
+            "labels": raw.attrs.get("labels", {}),
+            "dtypes": {str(c): str(t) for c, t in raw.dtypes.items()}}  # types relus à l'identique
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("project.json", json.dumps(meta, ensure_ascii=False, indent=2, default=str))
-        z.writestr("data.csv", raw.to_csv(index=False))
-        if results:
-            z.writestr("results.json", encode_results(results))
+        z.writestr("data.csv", csv)
+        if results:  # liés aux données et à la version : jamais restaurés sur d'autres données
+            stamped = {**results, "data_sha256": hashlib.sha256(csv).hexdigest(), "openpls": __version__}
+            z.writestr("results.json", encode_results(stamped))
     return buf.getvalue()
 
 
+def _read_data(blob: bytes, dtypes: dict) -> pd.DataFrame:
+    """Relit data.csv avec les types d'origine : texte gardé en texte (« 001 », « NA »), flottants exacts."""
+    text_cols = [c for c, t in dtypes.items() if t in ("object", "string", "str") or t.startswith("string")]
+    df = pd.read_csv(io.BytesIO(blob), dtype={c: str for c in text_cols} or None, keep_default_na=False,
+                     na_values=[""], float_precision="round_trip")
+    for c, t in dtypes.items():
+        if c not in df.columns or c in text_cols:
+            continue
+        try:
+            if t.startswith("datetime"):
+                df[c] = pd.to_datetime(df[c])
+            elif t in ("bool", "boolean") or t.startswith(("int", "Int", "float", "Float")):
+                df[c] = df[c].astype(t)
+        except (ValueError, TypeError):
+            pass
+    return df
+
+
 def load_project(content: bytes) -> dict:
+    import hashlib
+
     with zipfile.ZipFile(io.BytesIO(content)) as z:
         meta = json.loads(z.read("project.json").decode("utf-8"))
-        raw = pd.read_csv(io.BytesIO(z.read("data.csv")))
-        meta["results"] = decode_results(z.read("results.json").decode("utf-8")) if "results.json" in z.namelist() \
-            else None
+        csv = z.read("data.csv")
+        raw = _read_data(csv, meta.get("dtypes", {}))
+        meta["results"], meta["results_note"] = None, None
+        if "results.json" in z.namelist():
+            # des résultats illisibles ou d'une autre version n'empêchent pas d'ouvrir données et modèle
+            try:
+                res = decode_results(z.read("results.json").decode("utf-8"))
+                if res.get("data_sha256") != hashlib.sha256(csv).hexdigest():
+                    meta["results_note"] = "data"
+                elif res.get("openpls") != __version__:
+                    meta["results_note"] = "version"
+                else:
+                    meta["results"] = res
+            except Exception:  # noqa: BLE001
+                meta["results_note"] = "unreadable"
     raw.attrs["labels"] = meta.get("labels", {})
     meta["data"] = raw
     meta["editor_pos"] = {k: tuple(v) for k, v in meta.get("editor_pos", {}).items()}
@@ -144,7 +181,9 @@ def write_autosave(blob: bytes, info: dict) -> None:
     tmp = d / "autosave.openpls.tmp"
     tmp.write_bytes(blob)
     tmp.replace(d / "autosave.openpls")  # remplacement atomique : jamais de fichier à moitié écrit
-    (d / "autosave.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    tmpj = d / "autosave.json.tmp"
+    tmpj.write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    tmpj.replace(d / "autosave.json")
 
 
 def read_autosave() -> tuple[bytes, dict] | None:
@@ -173,7 +212,14 @@ def remember_recent(name: str, blob: bytes, info: dict, keep: int = 8) -> None:
     stem = re.sub(r"[^\w.-]+", "_", name.rsplit(".", 1)[0])[:60] or "projet"
     fname = f"{stem}-{hashlib.sha256(blob).hexdigest()[:8]}.openpls"
     (d / fname).write_bytes(blob)
-    items = [it for it in list_recent() if it["name"] != info.get("name", name)]
+    previous = list_recent()
+    items = [it for it in previous if it["name"] != info.get("name", name)]
+    for old in previous:  # ancienne version du même projet : fichier remplacé
+        if old["name"] == info.get("name", name) and old["file"] != fname:
+            try:
+                (d / old["file"]).unlink()
+            except OSError:
+                pass
     items.insert(0, {**info, "name": info.get("name", name), "file": fname})
     for old in items[keep:]:
         try:

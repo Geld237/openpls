@@ -112,7 +112,7 @@ Le chemin direct doit figurer dans le modèle pour distinguer médiation totale 
 ("Modération et médiation modérée", """
 - **Syntaxe** : `Y ~ X + M + X:M`.
 - **Méthode** : deux étapes (recommandée, Becker et al. 2018), produit des indicateurs ou orthogonalisation.
-- **Interprétation** : le coefficient de `X:M` indique de combien l'effet de X sur Y change quand M augmente d'un écart-type. Les pentes simples (M à -1, 0, +1 écart-type) et le graphique aident à l'expliquer.
+- **Interprétation** : un coefficient de `X:M` positif signifie que l'effet de X sur Y augmente avec M. OpenPLS standardise le terme produit : la variation exacte de la pente quand M augmente d'un écart-type est donnée par les pentes simples (M à -1, 0, +1 écart-type), à rapporter avec le graphique.
 - **f² de l'interaction** : 0,005 faible, 0,01 moyen, 0,025 fort (Kenny 2018).
 - **Médiation modérée** : si le modèle contient X → Me → Y et une interaction sur l'un de ces chemins, l'onglet Significativité donne l'**indice de médiation modérée** (Hayes 2015) et les effets indirects conditionnels. L'indice significatif (IC qui exclut 0) montre que l'effet indirect dépend du modérateur.
 - **Effet quadratique** : `Y ~ X + X:X` teste une relation en U ou en U inversé.
@@ -179,7 +179,7 @@ Les modèles comparés doivent expliquer la même variable cible avec les mêmes
 ("Analyse tétrade confirmatoire (CTA-PLS)", """
 La CTA-PLS (Gudergan et al. 2008) aide à choisir entre mesure **réflective** et **formative**. Pour un bloc d'au moins 4 indicateurs, elle teste les tétrades (différences de produits de covariances) :
 
-- si toutes les tétrades non redondantes valent 0 (intervalles corrigés par Bonferroni qui contiennent 0) → le modèle **réflectif** est compatible avec les données ;
+- si toutes les tétrades testées valent 0 (intervalles corrigés par Bonferroni sur le nombre de tétrades testées, qui contiennent 0) → le modèle **réflectif** est compatible avec les données ;
 - si au moins une tétrade diffère de 0 → le modèle réflectif est rejeté, une mesure **formative** est plus plausible.
 
 Le choix doit avant tout reposer sur la théorie.
@@ -315,7 +315,7 @@ The direct path must be in the model to tell full from partial mediation. Do not
 ("Moderation and moderated mediation", """
 - **Syntax**: `Y ~ X + M + X:M`.
 - **Method**: two-stage (recommended, Becker et al. 2018), product indicator or orthogonalization.
-- **Interpretation**: the `X:M` coefficient tells how much the effect of X on Y changes when M increases by one standard deviation. Simple slopes (M at -1, 0, +1 SD) and the chart help explain it.
+- **Interpretation**: a positive `X:M` coefficient means the effect of X on Y increases with M. OpenPLS standardizes the product term: the exact change in slope when M increases by one standard deviation is given by the simple slopes (M at -1, 0, +1 SD), to be reported with the chart.
 - **f² of the interaction**: 0.005 small, 0.01 medium, 0.025 large (Kenny 2018).
 - **Moderated mediation**: if the model contains X → Me → Y and an interaction on one of those paths, the Significance tab gives the **index of moderated mediation** (Hayes 2015) and the conditional indirect effects. A significant index (CI excluding 0) shows that the indirect effect depends on the moderator.
 - **Quadratic effect**: `Y ~ X + X:X` tests a U-shaped or inverted-U relationship.
@@ -382,7 +382,7 @@ The compared models must explain the same target variable with the same data.
 ("Confirmatory tetrad analysis (CTA-PLS)", """
 CTA-PLS (Gudergan et al. 2008) helps choose between **reflective** and **formative** measurement. For a block of at least 4 indicators, it tests the tetrads (differences of covariance products):
 
-- if all non-redundant tetrads equal 0 (Bonferroni-adjusted intervals containing 0) → the **reflective** model is consistent with the data;
+- if all tested tetrads equal 0 (intervals Bonferroni-adjusted for the number of tetrads tested, containing 0) → the **reflective** model is consistent with the data;
 - if at least one tetrad differs from 0 → the reflective model is rejected; **formative** measurement is more plausible.
 
 The choice should rest primarily on theory.

@@ -507,3 +507,16 @@ def test_project_with_results_autosave_and_recent(tmp_path, monkeypatch):
     assert pj.list_recent()[0]["name"] == "a.openpls" and pj.read_recent(pj.list_recent()[0]) == blob
     pj.clear_history()
     assert not pj.list_recent() and pj.read_autosave() is None
+
+
+def test_resume_offer_does_not_block_autosave(tmp_path, monkeypatch):
+    """Audit : travailler sans répondre au bandeau ne doit pas empêcher la sauvegarde automatique."""
+    from openpls import project as pj
+
+    monkeypatch.setenv("OPENPLS_HOME", str(tmp_path))
+    pj.write_autosave(b"ancien", {"name": "ancien.openpls", "date": "2026-01-01 00:00", "rows": 1})
+    at = _app().run()
+    assert any("Reprendre le travail en cours" in m.value for m in at.markdown)
+    _btn(at, "Estimer").click().run()
+    assert not any("Reprendre le travail en cours" in m.value for m in at.markdown)
+    assert pj.read_autosave()[1]["rows"] == 450  # la sauvegarde a repris

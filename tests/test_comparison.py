@@ -30,3 +30,17 @@ def test_cta_reflective_vs_formative():
     out = cta(d, m, n_boot=300, seed=1)
     assert bool(out["summary"].loc["R", "réflectif compatible"])
     assert not bool(out["summary"].loc["F", "réflectif compatible"])
+
+
+def test_cta_false_rejection_rate_stays_below_alpha():
+    """Audit : avec k = 6 indicateurs réflectifs, le rejet à tort doit rester sous le seuil de 10 %."""
+    rejections = 0
+    for rep in range(40):
+        rng = np.random.default_rng(100 + rep)
+        f = rng.normal(size=300)
+        d = pd.DataFrame({f"r{i}": 0.7 * f + 0.7 * rng.normal(size=300) for i in range(6)})
+        d["y"] = 0.5 * f + rng.normal(size=300)
+        m = Model.from_syntax("R =~ r0 + r1 + r2 + r3 + r4 + r5\nY =~ y\nY ~ R")
+        out = cta(d, m, n_boot=200, seed=rep)
+        rejections += not bool(out["summary"].loc["R", "réflectif compatible"])
+    assert rejections / 40 <= 0.15  # 25 % avant correction

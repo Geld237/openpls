@@ -29,6 +29,9 @@ from openpls.moderation import moderated_mediation_statistics, simple_slopes, si
 from openpls.simulate import simulate, simulate_higher_order
 
 _HERE = Path(__file__).resolve().parent
+# sauvegarde automatique et projets récents : seulement pour un usage local. Un serveur ouvert sur le réseau
+# partagerait le dossier ~/.openpls (et donc les données) entre tous les utilisateurs.
+LOCAL = str(st.get_option("server.address") or "") in ("localhost", "127.0.0.1", "::1")
 st.set_page_config(page_title="OpenPLS", page_icon=str(_HERE / "static" / "icon.png"), layout="wide")
 st.html(f"<style>{(_HERE / 'style.css').read_text(encoding='utf-8')}</style>")
 if "lang" not in st.session_state:
@@ -49,7 +52,7 @@ if "_resume_checked" not in st.session_state:
     st.session_state["_resume_checked"] = True
     from openpls.project import read_autosave as _read_autosave
 
-    _auto = _read_autosave() if load_prefs().get("autosave", True) else None
+    _auto = _read_autosave() if LOCAL and load_prefs().get("autosave", True) else None
     if _auto:
         st.session_state["_resume_offer"] = _auto[1]
 if st.session_state.get("_resume_offer"):
@@ -214,6 +217,7 @@ def store(name: str, key, value):
 DESKTOP = bool(os.environ.get("OPENPLS_DESKTOP"))  # lancé par l'application de bureau (fenêtre)
 
 
+
 def export_dir() -> Path:
     docs = Path.home() / "Documents"
     out = (docs if docs.is_dir() else Path.home()) / "OpenPLS"
@@ -355,6 +359,7 @@ elif source == "project":
         st.session_state["_carry"] = {**proj.get("settings", {}), "source": "project"}
         st.session_state["_proj_model"] = (data_id, proj["syntax"], proj["editor_pos"])
         st.session_state["_restore"] = (data_id, proj.get("results"))
+        st.session_state["_restore_note"] = proj.get("results_note")
         st.rerun()
 elif source == "example_hoc":
     raw = simulate_higher_order(400, seed=21)
@@ -419,6 +424,8 @@ if st.session_state.get("data_id") != data_id:
     for k in ("results", "boot", "adv", "boot_table"):
         st.session_state.pop(k, None)
     st.session_state["page"] = T("Modèle")  # nouvelles données : retour à la définition du modèle
+    if prev_id is not None:  # l'utilisateur travaille sur autre chose : la proposition de reprise est caduque
+        st.session_state.pop("_resume_offer", None)
 elif "syntax" not in st.session_state:  # état du widget perdu (passage sans zone de texte)
     st.session_state["syntax"] = st.session_state.get("syntax_saved", EXAMPLE_SYNTAX)
 
@@ -479,7 +486,7 @@ with page_model:
         ok = bool(model.structural)
         model_error = None
     except (ValueError, KeyError) as e:
-        model, data, warns, ok, model_error = None, None, [], False, str(e).strip("'\"")
+        model, data, warns, ok, model_error = None, None, [], False, tr(str(e).strip("'\""))
 
     data_key = f"{data_id}|{missing}"  # mêmes données, autre traitement des manquants : autres résultats
     fit_kwargs = dict(scheme=scheme, consistent=algo.startswith("PLSc"))
@@ -490,6 +497,14 @@ with page_model:
 
     for _n in st.session_state.pop("control_notes", []):
         st.info(_n)
+    _rn = st.session_state.pop("_restore_note", None)
+    if _rn:
+        st.info({"data": T("Les résultats enregistrés ne correspondent pas aux données du projet : ils ont été "
+                           "ignorés. Estime à nouveau le modèle."),
+                 "version": T("Projet créé avec une autre version d'OpenPLS : les résultats enregistrés ont été "
+                              "ignorés pour éviter toute différence. Estime à nouveau le modèle."),
+                 "unreadable": T("Les résultats enregistrés sont illisibles : données et modèle ont été ouverts, "
+                                 "estime à nouveau le modèle.")}.get(_rn, ""))
     if model_error:
         st.error(model_error)
     for w in warns:
@@ -497,6 +512,8 @@ with page_model:
     run = st.button("▶  " + T("Estimer le modèle"), type="primary", disabled=not ok)
 
     res = None
+    if run:
+        st.session_state.pop("_resume_offer", None)
     if run and ok:
         try:
             res = fit(data, model, **fit_kwargs)
@@ -653,7 +670,7 @@ def _project_section(slot) -> None:
                                      st.session_state.get("editor_pos"), _settings_now)
         st.session_state["_proj_blob"] = (_sig, _blob)
         # sauvegarde automatique : seulement un vrai travail (fichier importé, projet, ou résultats calculés)
-        if load_prefs().get("autosave", True) and (source in ("file", "project") or res is not None) \
+        if LOCAL and load_prefs().get("autosave", True) and (source in ("file", "project") or res is not None) \
                 and not st.session_state.get("_resume_offer"):
             try:
                 _pj.write_autosave(_blob, {"name": _pname, "date": time.strftime("%Y-%m-%d %H:%M"),
@@ -663,13 +680,13 @@ def _project_section(slot) -> None:
     _blob = st.session_state["_proj_blob"][1]
     _info = {"name": _pname, "date": time.strftime("%Y-%m-%d %H:%M"), "rows": int(len(raw_original))}
     offer_file("⬇  " + T("Enregistrer le projet (.openpls)"), _blob, _pname, key="dl_project", mime="application/zip",
-               container=slot, on_click=lambda: _pj.remember_recent(_pname, _blob, _info))
+               container=slot, on_click=(lambda: _pj.remember_recent(_pname, _blob, _info)) if LOCAL else None)
     slot.caption(T("Données, modèle, disposition, réglages et résultats dans un seul fichier, à rouvrir avec "
                          "« Importer un fichier »."))
 
 
 _project_slot = st.sidebar.container()
-_recent = _pj.list_recent()
+_recent = _pj.list_recent() if LOCAL else []
 if _recent:
     with st.sidebar.expander(T("Projets récents")):
         for _i, _it in enumerate(_recent):
@@ -948,11 +965,11 @@ with tabs[3]:
         st.rerun()
     if boot is not None:
         if boot.attrs.get("failure_rate", 0) > 0.05:
-            st.error(T("Inférence NON fiable — ") + " · ".join(boot.attrs["warnings"]) +
+            st.error(T("Inférence NON fiable — ") + " · ".join(tr(w) for w in boot.attrs["warnings"]) +
                      T(". Essaie le PLS classique (au lieu de PLSc), un échantillon plus grand ou un modèle de mesure "
                        "plus fiable."))
         elif boot.attrs.get("warnings"):
-            st.warning(" · ".join(boot.attrs["warnings"]))
+            st.warning(" · ".join(tr(w) for w in boot.attrs["warnings"]))
         st.caption(T("{n} tirages utilisés.", n=boot.attrs.get('n_boot_ok', len(boot))) + " " +
                    (T("Intervalles BCa.") if boot.attrs.get("ci_method") == "BCa" else T("Intervalles percentiles.")))
         lo, hi = boot.columns[-2], boot.columns[-1]
@@ -1454,7 +1471,7 @@ with tabs[4]:
             st.subheader(T("Synthèse"))
             st.dataframe(flag(yes_no(out["summary"]), {"réflectif compatible": lambda v: v == T("non")}),
                          width="stretch")
-            st.caption(T("Intervalles bootstrap corrigés par Bonferroni sur les k(k−3)/2 tétrades non redondantes. "
+            st.caption(T("Intervalles bootstrap corrigés par Bonferroni sur l'ensemble des tétrades testées du bloc. "
                          "« non » : au moins une tétrade diffère de 0, le modèle réflectif est rejeté. Le choix "
                          "réflectif/formatif doit d'abord reposer sur la théorie."))
             with st.expander(T("Détail des tétrades")):
@@ -1504,7 +1521,8 @@ offer_file("⬇  " + T("Syntaxe du modèle"), st.session_state["syntax"], T("mod
 from openpls.diagram_export import python_script
 
 _rkey = (base_key, boot is not None and boot.attrs.get("n_boot_ok"), alpha, st.session_state.get("boot_ci"),
-         st.session_state.get("lang"), st.session_state.get("decimal"))
+         st.session_state.get("lang"), st.session_state.get("decimal"),
+         st.session_state.get("_diagram_cache", (None,))[0])  # le diagramme du rapport suit l'affichage
 if st.session_state.get("_report", (None,))[0] != _rkey:
     from openpls.report import build_report
 

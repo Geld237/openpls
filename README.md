@@ -4,7 +4,7 @@ Implémentation **libre et open source** du PLS-SEM (*Partial Least Squares Stru
 
 Le code est une **réimplémentation indépendante, écrite à partir de la littérature scientifique publiée**. Il ne contient aucun code, fichier ni ressource d'un logiciel propriétaire.
 
-## Fonctionnalités (v0.8)
+## Fonctionnalités (v0.9)
 
 | | |
 |---|---|
@@ -204,8 +204,10 @@ Deux scripts comparent aussi OpenPLS à des logiciels indépendants. Ils demande
 
 ## Confidentialité et limites connues
 
-- `openpls-gui` n'écoute que sur ta machine (`localhost`) : tes données ne sont pas visibles depuis le réseau. Pour partager volontairement l'interface sur un réseau local : `openpls-gui --server.address 0.0.0.0`.
-- Les valeurs manquantes sont supprimées par liste (une ligne incomplète est retirée).
+- `openpls-gui` n'écoute que sur ta machine (`localhost`) : tes données ne sont pas visibles depuis le réseau. Pour partager volontairement l'interface sur un réseau local : `openpls-gui --server.address 0.0.0.0`. Dans ce mode, la sauvegarde automatique et les projets récents sont désactivés, car tous les utilisateurs partageraient le même dossier.
+- Sauvegarde automatique : une copie du travail en cours, données comprises, est gardée dans `~/.openpls` (ou le dossier `OPENPLS_HOME`). Elle se désactive et s'efface dans *Paramètres*.
+- Projets : les résultats enregistrés ne sont restaurés que si les données du projet et la version d'OpenPLS sont identiques ; sinon le modèle est simplement à ré-estimer.
+- Valeurs manquantes : suppression par liste par défaut ; moyenne ou imputation par régression au choix.
 - PLSpredict et l'IPMA ne sont pas proposés pour les modèles avec interaction ou d'ordre supérieur.
 - MICOM n'est pas corrigé pour les tests multiples : avec beaucoup de construits et de groupes, un rejet isolé peut survenir par hasard.
 - Modération avec PLSc : seule l'approche en deux étapes est corrigée (Becker et al. 2018) ; les approches par produit d'indicateurs sous-estiment alors l'interaction.
