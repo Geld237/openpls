@@ -169,3 +169,42 @@ def simple_slope_statistics(res) -> pd.Series:
         for lvl, slope in tbl["pente"].items():
             out[("simple_slope", f"{a} -> {dst} | {b} = {lvl:+.0f} ET")] = slope
     return pd.Series(out, dtype=float)
+
+
+def moderated_mediation_statistics(res) -> pd.Series:
+    """Indice de médiation modérée (Hayes 2015) et effets indirects conditionnels (W à -1, 0, +1 ET).
+
+    Première étape (Me ~ X + W + X:W, puis Me -> Y) : indice = b(X:W -> Me)/σ × b(Me -> Y) ;
+    effet indirect conditionnel à W = w : (b(X -> Me) + b(X:W -> Me)·w/σ) × b(Me -> Y).
+    Seconde étape (X -> Me, puis Y ~ Me + W + Me:W) : indice = b(X -> Me) × b(Me:W -> Y)/σ ;
+    effet conditionnel : b(X -> Me) × (b(Me -> Y) + b(Me:W -> Y)·w/σ).
+    σ : écart-type du terme produit (le terme d'interaction est standardisé)."""
+    spec = res.spec or res.model
+    pc = res.path_coefficients
+    scale = getattr(res, "interaction_scale", None) or {}
+    paths = set(spec.structural)
+    out = {}
+    for a, b, d in spec.interactions:
+        if a == b:
+            continue
+        name = interaction_name(a, b)
+        if name not in pc.index:
+            continue
+        sd = scale.get(name, (0.0, 1.0))[1]
+        bint = pc.loc[name, d] / sd
+        for x, w in ((a, b), (b, a)):
+            # première étape : x -> d (modéré par w), puis d -> y
+            for (s, y) in paths:
+                if s == d and y not in (x, w):
+                    lab = f"{x} -> {d} -> {y} | {w}"
+                    out[("mod_mediation", lab)] = bint * pc.loc[d, y]
+                    for lvl in (-1.0, 0.0, 1.0):
+                        out[("cond_indirect", f"{lab} = {lvl:+.0f} ET")] = (pc.loc[x, d] + bint * lvl) * pc.loc[d, y]
+            # seconde étape : z -> x, puis x -> d modéré par w
+            for (z, s) in paths:
+                if s == x and z not in (w, d):
+                    lab = f"{z} -> {x} -> {d} | {w}"
+                    out[("mod_mediation", lab)] = pc.loc[z, x] * bint
+                    for lvl in (-1.0, 0.0, 1.0):
+                        out[("cond_indirect", f"{lab} = {lvl:+.0f} ET")] = pc.loc[z, x] * (pc.loc[x, d] + bint * lvl)
+    return pd.Series(out, dtype=float)

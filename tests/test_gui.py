@@ -118,6 +118,21 @@ ADV_CASES = [
 ]
 
 
+def test_app_model_comparison_and_cta_message():
+    at = _app().run()
+    _btn(at, "Estimer").click().run()
+    at.radio(key="adv_choice").set_value("Comparaison de modèles").run()
+    at.text_area(key="cmp_syn_0").set_value(at.session_state["syntax"].replace("ETA2 ~ ETA1 + XI1", "ETA2 ~ ETA1")).run()
+    _btn(at, "Comparer les modèles").click().run()
+    assert not at.exception, at.exception
+    tbl = next(df.value for df in at.dataframe if "BIC" in df.value.columns)
+    assert len(tbl) == 2 and abs(tbl["poids BIC"].sum() - 1) < 1e-9
+    at.radio(key="adv_choice").set_value("Tétrades (CTA-PLS)").run()
+    _btn(at, "Lancer la CTA-PLS").click().run()
+    assert not at.exception, at.exception
+    assert any("4 indicateurs" in e.value for e in at.error)  # blocs de 3 indicateurs dans l'exemple
+
+
 @pytest.mark.parametrize("choice,inputs,button,expected", ADV_CASES, ids=[c[0].split()[0] for c in ADV_CASES])
 def test_app_advanced_analyses(choice, inputs, button, expected):
     at = _app().run()
@@ -403,3 +418,18 @@ def test_control_variables_and_quadratic_effect():
     r = fit(d2[m.indicators], m)
     assert {"AGE", "PAYS_FR", "PAYS_SN", "XI1:XI1"} <= set(r.path_coefficients.index)
     assert expand_controls(s2, d2)[0] == s2  # idempotent
+
+
+def test_bca_difference_and_moderated_mediation():
+    at = _app(auto_boot=True)
+    at.session_state["n_boot"] = 100
+    at.run()
+    at.text_area(key="syntax").set_value(SYNTAX.replace("ETA1 ~ XI1 + XI2", "ETA1 ~ XI1 + XI2 + XI1:XI2")).run()
+    _btn(at, "Estimer").click().run()
+    assert not at.exception, at.exception
+    subs = [s.value for s in at.subheader]
+    assert "Indice de médiation modérée (Hayes 2015)" in subs and "Comparer deux coefficients" in subs
+    assert any("différence" in str(df.value.index.tolist()) for df in at.dataframe)
+    at.radio(key="boot_ci").set_value("bca").run()
+    assert not at.exception, at.exception
+    assert any("Intervalles BCa." in c.value for c in at.caption)

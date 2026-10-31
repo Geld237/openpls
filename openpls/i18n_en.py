@@ -622,3 +622,68 @@ EN.update({
         "{c}: categorical variable, {k} dummy variable(s) (reference: {r})",
     "# Variables de contrôle (un indicateur)": "# Control variables (single indicator)",
 })
+
+EN.update({
+    "Jackknife (correction BCa)…": "Jackknife (BCa correction)…",
+    "Bootstrap à **{n}** échantillons, IC à {c} %. Peut prendre de quelques secondes à quelques minutes.":
+        "Bootstrap with **{n}** samples, {c}% CI. May take from a few seconds to a few minutes.",
+    "Intervalles de confiance": "Confidence intervals",
+    "percentile": "percentile",
+    "BCa (corrigé du biais et accéléré)": "BCa (bias-corrected and accelerated)",
+    "BCa : recommandé pour les effets indirects (asymétriques). Demande un jackknife en plus du bootstrap.":
+        "BCa: recommended for (skewed) indirect effects. Requires a jackknife in addition to the bootstrap.",
+    "Intervalles BCa.": "BCa intervals.",
+    "Intervalles percentiles.": "Percentile intervals.",
+    "Indice de médiation modérée (Hayes 2015)": "Index of moderated mediation (Hayes 2015)",
+    "Effets indirects conditionnels (modérateur à -1, 0, +1 ET)":
+        "Conditional indirect effects (moderator at -1, 0, +1 SD)",
+    "Comparer deux coefficients": "Compare two coefficients",
+    "Coefficient A": "Coefficient A",
+    "Coefficient B": "Coefficient B",
+    "différence": "difference",
+    "Différence significative si l'intervalle exclut 0 (p bootstrap bilatéral). Utile pour comparer deux effets "
+    "indirects ou deux chemins vers la même cible.":
+        "Significant difference if the interval excludes 0 (two-sided bootstrap p). Useful to compare two indirect "
+        "effects or two paths to the same target.",
+})
+
+EN.update({
+    "Comparaison de modèles": "Model comparison",
+    "Tétrades (CTA-PLS)": "Tetrads (CTA-PLS)",
+    "Compare le modèle actuel à des modèles **concurrents** sur les mêmes données, pour une même variable cible : "
+    "critères d'information (BIC, GM…) et poids de chaque modèle (Sharma et al. 2019, 2021).":
+        "Compares the current model with **competing** models on the same data, for the same target variable: "
+        "information criteria (BIC, GM…) and each model's weight (Sharma et al. 2019, 2021).",
+    "Modèles concurrents": "Competing models",
+    "Modèle {i}": "Model {i}",
+    "(actuel)": "(current)",
+    "Comparer les modèles": "Compare models",
+    "{m} : {n} observations au lieu de {k} (indicateurs différents) ; les critères ne sont comparables qu'à données "
+    "identiques.":
+        "{m}: {n} observations instead of {k} (different indicators); criteria are only comparable on identical data.",
+    "Plus petit = meilleur (en surligné). BIC et GM sont recommandés pour choisir entre modèles explicatifs ; le poids "
+    "BIC donne la probabilité relative de chaque modèle (Sharma et al. 2019).":
+        "Smaller = better (highlighted). BIC and GM are recommended to choose among explanatory models; the BIC "
+        "weight gives each model's relative probability (Sharma et al. 2019).",
+    "Le modèle de mesure **réflectif** est-il compatible avec les données ? La CTA-PLS teste les tétrades des blocs "
+    "d'au moins 4 indicateurs : une tétrade différente de 0 contredit le modèle réflectif et plaide pour une mesure "
+    "formative (Gudergan et al. 2008).":
+        "Is the **reflective** measurement model consistent with the data? CTA-PLS tests the tetrads of blocks with "
+        "at least 4 indicators: a tetrad different from 0 contradicts the reflective model and points to formative "
+        "measurement (Gudergan et al. 2008).",
+    "Lancer la CTA-PLS": "Run CTA-PLS",
+    "Bootstrap des tétrades…": "Bootstrapping tetrads…",
+    "Intervalles bootstrap corrigés par Bonferroni sur les k(k−3)/2 tétrades non redondantes. « non » : au moins une "
+    "tétrade diffère de 0, le modèle réflectif est rejeté. Le choix réflectif/formatif doit d'abord reposer sur la "
+    "théorie.":
+        "Bootstrap intervals Bonferroni-adjusted over the k(k−3)/2 non-redundant tetrads. “no”: at least one tetrad "
+        "differs from 0, the reflective model is rejected. The reflective/formative choice should rest on theory first.",
+    "Détail des tétrades": "Tetrad details",
+    "prédicteurs": "predictors", "poids AIC": "AIC weight", "poids BIC": "BIC weight",
+    "tétrade": "tetrad", "IC bas (Bonferroni)": "CI low (Bonferroni)", "IC haut (Bonferroni)": "CI high (Bonferroni)",
+    "différente de 0": "different from 0", "indicateurs": "indicators", "tétrades testées": "tetrads tested",
+    "tétrades ≠ 0": "tetrads ≠ 0", "réflectif compatible": "reflective consistent",
+    "Comparaison modeles": "Model comparison", "CTA tetrades": "CTA tetrads",
+    "La CTA-PLS demande au moins un bloc de 4 indicateurs ou plus":
+        "CTA-PLS requires at least one block with 4 or more indicators",
+})

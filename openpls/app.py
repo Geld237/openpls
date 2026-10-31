@@ -19,13 +19,13 @@ from openpls import Model, fit, bootstrap_statistics, quality_criteria, htmt, fo
 from openpls.effects import classify_mediation, effect_statistics, total_effects, specific_indirect_effects
 from openpls.editor import model_editor
 from openpls.assessment import measurement_statistics
-from openpls.bootstrap import with_confidence_level
+from openpls.bootstrap import jackknife, with_confidence_level
 from openpls.gui_helpers import (add_dummy_columns, expand_controls, fmt_p, guess_syntax, model_to_dot, num,
                                  prepare_data, set_decimal, stars, stars_legend, to_excel)
 from openpls.settings import decimal_separator, default_decimal, load_prefs, save_pref, separator_for
 from openpls.i18n import T, tr, set_language, ui_language
 from openpls.higher_order import higher_order_measurement, higher_order_statistics, structural_view
-from openpls.moderation import simple_slopes, simple_slope_statistics
+from openpls.moderation import moderated_mediation_statistics, simple_slopes, simple_slope_statistics
 from openpls.simulate import simulate, simulate_higher_order
 
 _HERE = Path(__file__).resolve().parent
@@ -418,6 +418,9 @@ with page_model:
         parts = [effect_statistics(r), measurement_statistics(r)]
         if r.spec is not None and r.spec.interactions:
             parts.append(simple_slope_statistics(r))
+            mm = moderated_mediation_statistics(r)
+            if len(mm):
+                parts.append(mm)
         if r.spec is not None and r.spec.higher_order:
             parts.append(higher_order_statistics(r))
         return pd.concat(parts)
@@ -431,7 +434,23 @@ with page_model:
         b = st.session_state.get("boot")
         if not (b and b[:4] == boot_key() and b[6] == data_key):
             return None
-        return with_confidence_level(b[4], b[5], alpha)
+        jk = st.session_state.get("jack")
+        use_bca = st.session_state.get("boot_ci") == "bca" and jk and jk[0] == boot_key() + (data_key,)
+        return with_confidence_level(b[4], b[5], alpha, jk[1] if use_bca else None)
+
+
+    def run_jackknife() -> None:
+        bar = st.progress(0.0, text=T("Jackknife (correction BCa)…"))
+        try:
+            import warnings as _w
+
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                jk = jackknife(data, model, boot_stats, progress=lambda i, n: bar.progress(i / n), **fit_kwargs)
+            st.session_state["jack"] = (boot_key() + (data_key,), jk)
+        except Exception as e:  # noqa: BLE001
+            st.error(T("Échec : {e}", e=e))
+        bar.empty()
 
 
     def run_bootstrap() -> None:
@@ -702,14 +721,21 @@ with tabs[2]:
         st.caption(T("Diagonale = √AVE ; elle doit dépasser les corrélations de sa ligne et de sa colonne."))
 
 with tabs[3]:
-    st.write(T("Bootstrap à **{n}** échantillons, IC percentile à {c} %. "
+    st.write(T("Bootstrap à **{n}** échantillons, IC à {c} %. "
                "Peut prendre de quelques secondes à quelques minutes.", n=int(n_boot), c=int(round((1 - alpha) * 100))))
+    st.radio(T("Intervalles de confiance"), ["percentile", "bca"], horizontal=True, key="boot_ci",
+             format_func={"percentile": T("percentile"), "bca": T("BCa (corrigé du biais et accéléré)")}.get,
+             help=T("BCa : recommandé pour les effets indirects (asymétriques). Demande un jackknife en plus du "
+                    "bootstrap."))
     st.caption(T("Le seuil (1 %, 5 % ou 10 %) se règle au-dessus du diagramme, dans l'onglet Résultats."))
 
     if st.button("▶  " + T("Lancer le bootstrap"), key="run_boot"):
         run_bootstrap()
         st.rerun()
 
+    if boot is not None and st.session_state.get("boot_ci") == "bca" and boot.attrs.get("ci_method") != "BCa":
+        run_jackknife()
+        st.rerun()
     if boot is not None:
         if boot.attrs.get("failure_rate", 0) > 0.05:
             st.error(T("Inférence NON fiable — ") + " · ".join(boot.attrs["warnings"]) +
@@ -717,7 +743,8 @@ with tabs[3]:
                        "plus fiable."))
         elif boot.attrs.get("warnings"):
             st.warning(" · ".join(boot.attrs["warnings"]))
-        st.caption(T("{n} tirages utilisés.", n=boot.attrs.get('n_boot_ok', len(boot))))
+        st.caption(T("{n} tirages utilisés.", n=boot.attrs.get('n_boot_ok', len(boot))) + " " +
+                   (T("Intervalles BCa.") if boot.attrs.get("ci_method") == "BCa" else T("Intervalles percentiles.")))
         lo, hi = boot.columns[-2], boot.columns[-1]
         sig = (boot[lo] > 0) | (boot[hi] < 0)
         boot_view = boot.assign(significatif=sig.map({True: T("oui"), False: T("non")}))
@@ -727,7 +754,9 @@ with tabs[3]:
                   "simple_slope": T("Pentes simples (modération)"),
                   "outer_loading": T("Chargements externes"), "outer_weight": T("Poids externes"),
                   "hoc_loading": T("Chargements des composantes (ordre supérieur)"),
-                  "hoc_weight": T("Poids des composantes (ordre supérieur)")}
+                  "hoc_weight": T("Poids des composantes (ordre supérieur)"),
+                  "mod_mediation": T("Indice de médiation modérée (Hayes 2015)"),
+                  "cond_indirect": T("Effets indirects conditionnels (modérateur à -1, 0, +1 ET)")}
         for kind, title in labels.items():
             if kind in boot_view.index.get_level_values(0):
                 st.subheader(title)
@@ -756,13 +785,34 @@ with tabs[3]:
             st.dataframe(fmt(pd.DataFrame(rows).set_index("chemin")), width="stretch")
             st.caption(T("Typologie de Zhao, Lynch & Chen (2010). Significativité = l'IC bootstrap exclut 0. "
                          "Pour tester une médiation partielle, le chemin direct doit figurer dans le modèle."))
+        # ---- comparer deux coefficients (intervalle bootstrap de la différence)
+        st.subheader(T("Comparer deux coefficients"))
+        draws_all = st.session_state["boot"][5]
+        options = [f"{k} | {n}" for k, n in boot.index]
+        cc = st.columns(2)
+        c_a = cc[0].selectbox(T("Coefficient A"), options, key="diff_a", format_func=lambda s: s.split(" | ", 1)[1])
+        c_b = cc[1].selectbox(T("Coefficient B"), options, index=min(1, len(options) - 1), key="diff_b",
+                              format_func=lambda s: s.split(" | ", 1)[1])
+        ia, ib = options.index(c_a), options.index(c_b)
+        if ia != ib:
+            dd = draws_all[:, ia] - draws_all[:, ib]
+            est_d = boot["estimate"].iloc[ia] - boot["estimate"].iloc[ib]
+            lo_d, hi_d = np.percentile(dd, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+            p_d = min(1.0, 2 * min((dd <= 0).mean(), (dd >= 0).mean()))
+            tbl_d = pd.DataFrame({"A − B": [est_d], T("erreur-type"): [dd.std(ddof=1)], "p": [p_d],
+                                  ic_label(f"ci_{alpha / 2}"): [lo_d], ic_label(f"ci_{1 - alpha / 2}"): [hi_d]},
+                                 index=[T("différence")])
+            st.dataframe(fmt(tbl_d), width="stretch")
+            st.caption(T("Différence significative si l'intervalle exclut 0 (p bootstrap bilatéral). Utile pour "
+                         "comparer deux effets indirects ou deux chemins vers la même cible."))
         st.session_state["boot_table"] = boot_view
     else:
         st.session_state.pop("boot_table", None)
 
 # ---------------------------------------------------------------- analyses avancées
 ADV = [T("Prédiction (PLSpredict, CVPAT)"), T("Multigroupe (MGA, MICOM)"), T("Importance-performance (IPMA)"),
-       T("Conditions nécessaires (NCA)"), T("Endogénéité (copules)"), "CB-SEM / CFA", T("Segmentation (FIMIX-PLS)")]
+       T("Conditions nécessaires (NCA)"), T("Endogénéité (copules)"), "CB-SEM / CFA", T("Segmentation (FIMIX-PLS)"),
+       T("Comparaison de modèles"), T("Tétrades (CTA-PLS)")]
 base_key = (data_key, st.session_state["syntax"], tuple(sorted(fit_kwargs.items())), seed, len(data))
 plain = not model.interactions and not model.higher_order
 plain_why = T("avec interaction") if model.interactions else T("d'ordre supérieur")
@@ -1127,6 +1177,79 @@ with tabs[4]:
                                sol["posterior"].assign(segment=sol["membership"]).to_csv(index_label="observation"),
                                "segments_fimix.csv", key="fx_dl", mime="text/csv")
                 excel_extra.update({"FIMIX criteres": crit, "FIMIX chemins": sol["paths"]})
+
+    elif choice == ADV[7]:
+        st.markdown(T("Compare le modèle actuel à des modèles **concurrents** sur les mêmes données, pour une même "
+                      "variable cible : critères d'information (BIC, GM…) et poids de chaque modèle "
+                      "(Sharma et al. 2019, 2021)."))
+        n_alt = st.number_input(T("Modèles concurrents"), 1, 3, 1, key="cmp_n")
+        alts = {}
+        cols_alt = st.columns(int(n_alt))
+        for i in range(int(n_alt)):
+            with cols_alt[i]:
+                key_i = f"cmp_syn_{i}"
+                if key_i not in st.session_state:
+                    st.session_state[key_i] = st.session_state["syntax"]
+                alts[T("Modèle {i}", i=i + 2)] = st.text_area(T("Modèle {i}", i=i + 2), key=key_i, height=220)
+        target = st.selectbox(T("Construit cible"), endogenous, index=len(endogenous) - 1, key="cmp_t")
+        if run_button(T("Comparer les modèles"), "run_cmp"):
+            from openpls.comparison import information_criteria
+
+            fitted = {T("Modèle {i}", i=1) + " " + T("(actuel)"): (res, len(data))}
+            try:
+                for name, syn in alts.items():
+                    m_alt = Model.from_syntax(expand_controls(syn, raw)[0])
+                    d_alt, _ = prepare_data(raw, m_alt, missing=missing)
+                    if len(d_alt) != len(data):
+                        st.warning(T("{m} : {n} observations au lieu de {k} (indicateurs différents) ; les critères "
+                                     "ne sont comparables qu'à données identiques.", m=name, n=len(d_alt), k=len(data)))
+                    fitted[name] = (fit(d_alt, m_alt, **fit_kwargs), len(d_alt))
+                store("cmp", base_key + ("cmp", target, tuple(alts.values())), information_criteria(fitted, target))
+            except Exception as e:  # noqa: BLE001
+                st.error(T("Échec : {e}", e=tr(str(e))))
+        out = stored("cmp", base_key + ("cmp", target, tuple(alts.values())))
+        if out is not None:
+            sty = fmt(out)
+            for col in ("AIC", "BIC", "HQ", "GM"):
+                best = out[col].min()
+                sty = sty.map(lambda v, b=best: "font-weight:700;background:#DCE8F7" if v == b else "",
+                              subset=[tr(col)])
+            st.dataframe(sty, width="stretch")
+            st.caption(T("Plus petit = meilleur (en surligné). BIC et GM sont recommandés pour choisir entre modèles "
+                         "explicatifs ; le poids BIC donne la probabilité relative de chaque modèle "
+                         "(Sharma et al. 2019)."))
+            excel_extra.update({"Comparaison modeles": out})
+
+    elif choice == ADV[8]:
+        st.markdown(T("Le modèle de mesure **réflectif** est-il compatible avec les données ? La CTA-PLS teste les "
+                      "tétrades des blocs d'au moins 4 indicateurs : une tétrade différente de 0 contredit le modèle "
+                      "réflectif et plaide pour une mesure formative (Gudergan et al. 2008)."))
+        c = st.columns(2)
+        nb = c[0].number_input("Bootstrap", 200, 10000, 1000, step=500, key="cta_nb")
+        a_cta = c[1].radio(T("Seuil"), [0.05, 0.10], index=1, horizontal=True, key="cta_a",
+                           format_func=lambda v: f"{num(v * 100, 0)} %")
+        key = base_key + ("cta", nb, a_cta)
+        if run_button(T("Lancer la CTA-PLS"), "run_cta"):
+            from openpls.comparison import cta
+
+            bar = st.progress(0.0, text=T("Bootstrap des tétrades…"))
+            try:
+                store("cta", key, cta(data, model, n_boot=int(nb), alpha=float(a_cta), seed=seed,
+                                      progress=lambda f: bar.progress(min(f, 1.0))))
+            except Exception as e:  # noqa: BLE001
+                st.error(T("Échec : {e}", e=tr(str(e))))
+            bar.empty()
+        out = stored("cta", key)
+        if out:
+            st.subheader(T("Synthèse"))
+            st.dataframe(flag(yes_no(out["summary"]), {"réflectif compatible": lambda v: v == T("non")}),
+                         width="stretch")
+            st.caption(T("Intervalles bootstrap corrigés par Bonferroni sur les k(k−3)/2 tétrades non redondantes. "
+                         "« non » : au moins une tétrade diffère de 0, le modèle réflectif est rejeté. Le choix "
+                         "réflectif/formatif doit d'abord reposer sur la théorie."))
+            with st.expander(T("Détail des tétrades")):
+                st.dataframe(fmt(yes_no(out["tetrads"]), 4), width="stretch")
+            excel_extra.update({"CTA-PLS": out["summary"], "CTA tetrades": out["tetrads"]})
 
 with tabs[5]:
     st.subheader(T("Scores des variables latentes (standardisés)"))
