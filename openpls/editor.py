@@ -57,8 +57,10 @@ def editor_state(syntax: str, positions: dict | None = None) -> dict:
             "interactions": [list(i) for i in model.interactions]}
 
 
-def model_editor(columns: list[str], syntax: str, positions: dict | None = None, key: str = "editor"):
+def model_editor(columns: list[str], syntax: str, positions: dict | None = None, key: str = "editor",
+                 lang: str = "fr"):
     """Affiche l'éditeur. Retourne None, ou {"nonce", "syntax", "positions"} quand l'utilisateur applique."""
     state = editor_state(syntax, positions)
     version = hashlib.sha1((syntax + repr(sorted((positions or {}).items()))).encode()).hexdigest()
-    return _get_component()(columns=[str(c) for c in columns], state=state, version=version, key=key, default=None)
+    return _get_component()(columns=[str(c) for c in columns], state=state, version=version + lang, lang=lang,
+                            key=key, default=None)

@@ -10,6 +10,7 @@ import html
 import numpy as np
 import pandas as pd
 
+from .i18n import T
 from .model import Model
 
 _SUFFIX = re.compile(r"^(.*?)[_\-. ]?(\d+)$")
@@ -22,11 +23,11 @@ def guess_syntax(columns) -> str:
         m = _SUFFIX.match(str(col))
         prefix = m.group(1) if m and m.group(1) else str(col)
         groups.setdefault(prefix, []).append(str(col))
-    lines = ["# Modèle de mesure  ( =~ réflectif,  <~ formatif )"]
+    lines = [T("# Modèle de mesure  ( =~ réflectif,  <~ formatif )")]
     for prefix, cols in groups.items():
         name = re.sub(r"\W", "_", prefix).strip("_").upper() or "LV"
         lines.append(f"{name} =~ " + " + ".join(cols))
-    lines += ["", "# Modèle structurel  ( cible ~ source1 + source2 )", "# EXEMPLE ~ A + B"]
+    lines += ["", T("# Modèle structurel  ( cible ~ source1 + source2 )"), T("# EXEMPLE ~ A + B")]
     return "\n".join(lines)
 
 
@@ -75,7 +76,7 @@ def stars(p: float, alpha: float | None = None) -> str:
 
 
 def stars_legend(alpha: float | None = None) -> str:
-    return f"*** p < {num(0.01, 2)}, ** p < {num(0.05, 2)}, * p < {num(0.10, 2)}, ns non significatif"
+    return f"*** p < {num(0.01, 2)}, ** p < {num(0.05, 2)}, * p < {num(0.10, 2)}, " + T("ns non significatif")
 
 
 def fmt_p(p: float) -> str:
@@ -340,15 +341,15 @@ def prepare_data(df: pd.DataFrame, model: Model, keep: list[str] | None = None) 
     keep = [c for c in (keep or []) if c not in model.indicators]
     missing = [c for c in model.indicators + keep if c not in df.columns]
     if missing:
-        raise KeyError(f"Colonnes introuvables dans les données : {', '.join(missing)}")
+        raise KeyError(T("Colonnes introuvables dans les données : {cols}", cols=", ".join(missing)))
     sub = df[model.indicators].apply(pd.to_numeric, errors="coerce")
     for c in keep:
         sub[c] = df[c]
     n0 = len(sub)
     sub = sub.dropna()
     if len(sub) < n0:
-        warnings.append(f"{n0 - len(sub)} ligne(s) avec valeurs manquantes ou non numériques supprimée(s) "
-                        f"(suppression par liste) : {len(sub)} observations utilisées.")
+        warnings.append(T("{k} ligne(s) avec valeurs manquantes ou non numériques supprimée(s) "
+                          "(suppression par liste) : {n} observations utilisées.", k=n0 - len(sub), n=len(sub)))
     if len(sub) < 30:
-        warnings.append("Moins de 30 observations : les résultats seront très instables.")
+        warnings.append(T("Moins de 30 observations : les résultats seront très instables."))
     return sub.reset_index(drop=True), warnings

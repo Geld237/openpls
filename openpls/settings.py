@@ -84,7 +84,9 @@ def separator_for(language: str | None) -> str:
 
 
 def default_decimal() -> str:
-    return separator_for(install_language() or system_language())
+    """Séparateur de la langue de l'interface : choix enregistré, sinon installation, sinon système."""
+    lang = os.environ.get("OPENPLS_LANG") or load_prefs().get("language")
+    return separator_for(lang or install_language() or system_language())
 
 
 def decimal_separator() -> str:

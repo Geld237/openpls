@@ -123,7 +123,7 @@ def _start_server(port: int, log) -> subprocess.Popen:
 
 # ---------------------------------------------------------------- fenêtre
 _SELFTEST_JS = ("(function(){var t=document.body?document.body.innerText:'';"
-                "return JSON.stringify({ok:t.indexOf('Estimer le mod')>=0,"
+                "return JSON.stringify({ok:t.indexOf('Estimer le mod')>=0||t.indexOf('Estimate the mod')>=0,"
                 "editor:!!document.querySelector('iframe[title*=openpls_model_editor]')});})()")
 
 

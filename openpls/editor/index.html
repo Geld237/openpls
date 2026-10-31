@@ -54,8 +54,8 @@
 <body>
 <div id="app">
   <div id="side">
-    <h4>Indicateurs</h4>
-    <p class="hint">Glisse un indicateur sur une variable latente, ou sur le fond pour en créer une. Ctrl/⌘-clic : sélection multiple. Ordre supérieur : crée une variable vide puis « + Composante ».</p>
+    <h4 id="t-ind">Indicateurs</h4>
+    <p class="hint" id="t-hint">Glisse un indicateur sur une variable latente, ou sur le fond pour en créer une. Ctrl/⌘-clic : sélection multiple. Ordre supérieur : crée une variable vide puis « + Composante ».</p>
     <div id="chips"></div>
   </div>
   <div id="main">
@@ -74,11 +74,58 @@ post("streamlit:setFrameHeight", { height: 566 });
 let S = { latents: [], paths: [], interactions: [] };   // latents: {name, mode, indicators, x, y}
 let columns = [], version = null, selected = null, chipSel = new Set(), msg = "", msgErr = false;
 
+let LANG = "fr";
+const EN = {
+ "Ce chemin existe déjà": "This path already exists",
+ "Impossible : ce chemin créerait un cycle": "Not allowed: this path would create a cycle",
+ " ajouté": " added",
+ "Nom déjà utilisé : ": "Name already used: ",
+ "# Modèle de mesure  ( =~ réflectif,  <~ formatif )": "# Measurement model  ( =~ reflective,  <~ formative )",
+ "# Construits d'ordre supérieur": "# Higher-order constructs",
+ "# Modèle structurel  ( cible ~ source1 + source2 ;  X:M = modération )": "# Structural model  ( target ~ source1 + source2 ;  X:M = moderation )",
+ "Sans indicateur : ": "No indicator: ",
+ "Ordre supérieur avec une seule composante : ": "Higher-order construct with a single component: ",
+ "Ajoute au moins une variable latente": "Add at least one latent variable",
+ "Modèle envoyé ✓": "Model sent ✓",
+ "Dans ": "In ",
+ "Non utilisé": "Unused",
+ "+ Variable latente": "+ Latent variable",
+ "Disposition auto": "Auto layout",
+ "Renommer (Entrée)": "Rename (Enter)",
+ "Réflectif (=~)": "Reflective (=~)",
+ "Formatif (<~)": "Formative (<~)",
+ "Basculer réflectif / formatif": "Toggle reflective / formative",
+ "+ Composante": "+ Component",
+ " devient composante de ": " becomes a component of ",
+ "Fait de cette variable un construit d'ordre supérieur (les composantes ne doivent pas avoir de chemins)": "Makes this variable a higher-order construct (components must not have paths)",
+ "Supprimer": "Delete",
+ "+ Modérateur": "+ Moderator",
+ "Modération ": "Moderation ",
+ "Ajoute l'effet d'interaction (et l'effet simple du modérateur)": "Adds the interaction effect (and the moderator's simple effect)",
+ "Supprimer le chemin": "Delete path",
+ "Appliquer au modèle ▶": "Apply to model ▶",
+ "dépose des indicateurs ici": "drop indicators here",
+ "Composante — cliquer pour retirer": "Component — click to remove",
+ " est d'ordre supérieur : ses termes sont des variables latentes": " is higher-order: its terms are latent variables",
+ "ordre sup. · ": "higher-order · ",
+ "formatif": "formative",
+ "réflectif": "reflective",
+ "Glisser vers une autre variable pour créer un chemin": "Drag to another variable to create a path",
+ "Indicateurs": "Indicators",
+ "Glisse un indicateur sur une variable latente, ou sur le fond pour en créer une. Ctrl/⌘-clic : sélection multiple. Ordre supérieur : crée une variable vide puis « + Composante ».": "Drag an indicator onto a latent variable, or onto the background to create one. Ctrl/⌘-click: multiple selection. Higher-order: create an empty variable, then “+ Component”."
+};
+function L(s) { return LANG === "en" && EN[s] !== undefined ? EN[s] : s; }
 window.addEventListener("message", (ev) => {
   const d = ev.data;
   if (!d || d.type !== "streamlit:render") return;
   const a = d.args;
   columns = a.columns || [];
+  if ((a.lang || "fr") !== LANG) {
+    LANG = a.lang || "fr";
+    const h = document.getElementById("t-ind"), p = document.getElementById("t-hint");
+    if (!h.dataset.fr) { h.dataset.fr = h.textContent; p.dataset.fr = p.textContent; }
+    h.textContent = L(h.dataset.fr); p.textContent = L(p.dataset.fr);
+  }
   if (a.version !== version) {               // nouveau modèle venant de Python : on recharge
     version = a.version;
     S = JSON.parse(JSON.stringify(a.state));
@@ -108,7 +155,7 @@ function reaches(from, to) {        // existe-t-il un chemin from -> ... -> to ?
 // ---------------------------------------------------------------- actions
 function assign(cols, lvName) {
   const lv = lvByName(lvName);
-  if (lv.children.length) { setMsg(lv.name + " est d'ordre supérieur : ses termes sont des variables latentes", true); return render(); }
+  if (lv.children.length) { setMsg(lv.name + L(" est d'ordre supérieur : ses termes sont des variables latentes"), true); return render(); }
   cols.forEach((c) => { S.latents.forEach((l) => { l.indicators = l.indicators.filter((i) => i !== c); });
                         lv.indicators.push(c); });
   chipSel.clear(); render();
@@ -123,9 +170,9 @@ function addPath(src, dst) {
   if (src === dst) return;
   const loc = [src, dst].find((n) => parentOf(n));
   if (loc) return setMsg(loc + " est une composante de " + parentOf(loc).name + " : relie plutôt " + parentOf(loc).name, true);
-  if (S.paths.some((p) => p[0] === src && p[1] === dst)) return setMsg("Ce chemin existe déjà", true);
-  if (reaches(dst, src)) return setMsg("Impossible : ce chemin créerait un cycle", true);
-  S.paths.push([src, dst]); setMsg(src + " → " + dst + " ajouté"); render();
+  if (S.paths.some((p) => p[0] === src && p[1] === dst)) return setMsg(L("Ce chemin existe déjà"), true);
+  if (reaches(dst, src)) return setMsg(L("Impossible : ce chemin créerait un cycle"), true);
+  S.paths.push([src, dst]); setMsg(src + " → " + dst + L(" ajouté")); render();
 }
 function removeLatent(name) {
   S.latents = S.latents.filter((l) => l.name !== name);
@@ -137,7 +184,7 @@ function removeLatent(name) {
 function rename(oldN, newN) {
   newN = cleanName(newN);
   if (!newN || newN === oldN) return;
-  if (lvByName(newN)) return setMsg("Nom déjà utilisé : " + newN, true);
+  if (lvByName(newN)) return setMsg(L("Nom déjà utilisé : ") + newN, true);
   lvByName(oldN).name = newN;
   S.paths.forEach((p) => { if (p[0] === oldN) p[0] = newN; if (p[1] === oldN) p[1] = newN; });
   S.interactions.forEach((it) => { for (let k = 0; k < 3; k++) if (it[k] === oldN) it[k] = newN; });
@@ -145,11 +192,11 @@ function rename(oldN, newN) {
   selected = { type: "lv", name: newN }; render();
 }
 function toSyntax() {
-  const lines = ["# Modèle de mesure  ( =~ réflectif,  <~ formatif )"];
+  const lines = [L("# Modèle de mesure  ( =~ réflectif,  <~ formatif )")];
   S.latents.forEach((l) => { if (l.indicators.length) lines.push(`${l.name} ${l.mode === "B" ? "<~" : "=~"} ${l.indicators.join(" + ")}`); });
   const hocs = S.latents.filter((l) => l.children.length);
-  if (hocs.length) { lines.push("", "# Construits d'ordre supérieur"); hocs.forEach((l) => lines.push(`${l.name} ${l.mode === "B" ? "<~" : "=~"} ${l.children.join(" + ")}`)); }
-  lines.push("", "# Modèle structurel  ( cible ~ source1 + source2 ;  X:M = modération )");
+  if (hocs.length) { lines.push("", L("# Construits d'ordre supérieur")); hocs.forEach((l) => lines.push(`${l.name} ${l.mode === "B" ? "<~" : "=~"} ${l.children.join(" + ")}`)); }
+  lines.push("", L("# Modèle structurel  ( cible ~ source1 + source2 ;  X:M = modération )"));
   S.latents.forEach((l) => {
     const terms = S.paths.filter((p) => p[1] === l.name).map((p) => p[0])
       .concat(S.interactions.filter((i) => i[2] === l.name).map((i) => i[0] + ":" + i[1]));
@@ -159,13 +206,13 @@ function toSyntax() {
 }
 function apply() {
   const empty = S.latents.filter((l) => !l.indicators.length && !l.children.length).map((l) => l.name);
-  if (empty.length) return setMsg("Sans indicateur : " + empty.join(", "), true);
+  if (empty.length) return setMsg(L("Sans indicateur : ") + empty.join(", "), true);
   const thin = S.latents.filter((l) => l.children.length === 1).map((l) => l.name);
-  if (thin.length) return setMsg("Ordre supérieur avec une seule composante : " + thin.join(", "), true);
-  if (!S.latents.length) return setMsg("Ajoute au moins une variable latente", true);
+  if (thin.length) return setMsg(L("Ordre supérieur avec une seule composante : ") + thin.join(", "), true);
+  if (!S.latents.length) return setMsg(L("Ajoute au moins une variable latente"), true);
   const positions = {}; S.latents.forEach((l) => { positions[l.name] = [l.x, l.y]; });
   setValue({ nonce: Date.now() + Math.random(), syntax: toSyntax(), positions });
-  setMsg("Modèle envoyé ✓");
+  setMsg(L("Modèle envoyé ✓"));
 }
 function autoLayout() {
   const depth = {}; const lvs = S.latents.map((l) => l.name);
@@ -189,7 +236,7 @@ function render() {
   columns.forEach((c) => {
     const el = document.createElement("div"); const o = owner(c);
     el.className = "chip" + (o ? " used" : "") + (chipSel.has(c) ? " sel" : "");
-    el.textContent = c + (o ? "  · " + o.name : ""); el.title = o ? "Dans " + o.name : "Non utilisé";
+    el.textContent = c + (o ? "  · " + o.name : ""); el.title = o ? L("Dans ") + o.name : L("Non utilisé");
     el.draggable = true; el.dataset.col = c;
     el.addEventListener("click", (e) => { if (e.ctrlKey || e.metaKey || e.shiftKey) { chipSel.has(c) ? chipSel.delete(c) : chipSel.add(c); } else { chipSel = new Set([c]); } render(); });
     el.addEventListener("dragstart", (e) => { if (!chipSel.has(c)) chipSel = new Set([c]);
@@ -201,25 +248,25 @@ function render() {
   const tb = $("toolbar"); tb.innerHTML = "";
   const btn = (label, fn, cls) => { const b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; tb.appendChild(b); return b; };
   const sep = () => { const s = document.createElement("span"); s.className = "sep"; tb.appendChild(s); };
-  btn("+ Variable latente", () => addLatent("LV", 40 + 25 * (S.latents.length % 8), 40 + 25 * (S.latents.length % 8), [...chipSel]));
-  btn("Disposition auto", autoLayout);
+  btn(L("+ Variable latente"), () => addLatent("LV", 40 + 25 * (S.latents.length % 8), 40 + 25 * (S.latents.length % 8), [...chipSel]));
+  btn(L("Disposition auto"), autoLayout);
   if (selected && selected.type === "lv" && lvByName(selected.name)) {
     const lv = lvByName(selected.name); sep();
-    const inp = document.createElement("input"); inp.value = lv.name; inp.size = 10; inp.title = "Renommer (Entrée)";
+    const inp = document.createElement("input"); inp.value = lv.name; inp.size = 10; inp.title = L("Renommer (Entrée)");
     inp.addEventListener("keydown", (e) => { if (e.key === "Enter") rename(lv.name, inp.value); });
     inp.addEventListener("blur", () => rename(lv.name, inp.value));
     tb.appendChild(inp);
-    btn(lv.mode === "A" ? "Réflectif (=~)" : "Formatif (<~)", () => { lv.mode = lv.mode === "A" ? "B" : "A"; render(); }).title = "Basculer réflectif / formatif";
+    btn(lv.mode === "A" ? L("Réflectif (=~)") : L("Formatif (<~)"), () => { lv.mode = lv.mode === "A" ? "B" : "A"; render(); }).title = L("Basculer réflectif / formatif");
     const cand = S.latents.filter((l) => l.name !== lv.name && l.indicators.length && !l.children.length && !parentOf(l.name)
                                      && !S.paths.some((p) => p.includes(l.name)));
     if (!lv.indicators.length && !parentOf(lv.name) && cand.length) {
       const cs = document.createElement("select"); cs.id = "compsel";
       cand.forEach((l) => { const o = document.createElement("option"); o.value = o.textContent = l.name; cs.appendChild(o); });
       tb.appendChild(cs);
-      btn("+ Composante", () => { lv.children.push(cs.value); setMsg(cs.value + " devient composante de " + lv.name); render(); })
-        .title = "Fait de cette variable un construit d'ordre supérieur (les composantes ne doivent pas avoir de chemins)";
+      btn(L("+ Composante"), () => { lv.children.push(cs.value); setMsg(cs.value + L(" devient composante de ") + lv.name); render(); })
+        .title = L("Fait de cette variable un construit d'ordre supérieur (les composantes ne doivent pas avoir de chemins)");
     }
-    btn("Supprimer", () => removeLatent(lv.name), "danger");
+    btn(L("Supprimer"), () => removeLatent(lv.name), "danger");
   } else if (selected && selected.type === "path" && S.paths[selected.i]) {
     const p = S.paths[selected.i]; sep();
     const lab = document.createElement("span"); lab.textContent = p[0] + " → " + p[1]; tb.appendChild(lab);
@@ -227,23 +274,23 @@ function render() {
     S.latents.filter((l) => l.name !== p[0] && l.name !== p[1]).forEach((l) => { const o = document.createElement("option"); o.value = o.textContent = l.name; sel.appendChild(o); });
     if (sel.options.length) {
       tb.appendChild(sel);
-      btn("+ Modérateur", () => {
+      btn(L("+ Modérateur"), () => {
         const m = sel.value, tgt = p[1];
         if (!S.paths.some((q) => q[0] === m && q[1] === tgt)) S.paths.push([m, tgt]);   // effet simple requis
         if (!S.interactions.some((i) => i[0] === p[0] && i[1] === m && i[2] === tgt)) S.interactions.push([p[0], m, tgt]);
-        setMsg("Modération " + p[0] + " × " + m + " → " + tgt); render();
-      }).title = "Ajoute l'effet d'interaction (et l'effet simple du modérateur)";
+        setMsg(L("Modération ") + p[0] + " × " + m + " → " + tgt); render();
+      }).title = L("Ajoute l'effet d'interaction (et l'effet simple du modérateur)");
     }
-    btn("Supprimer le chemin", () => {
+    btn(L("Supprimer le chemin"), () => {
       S.interactions = S.interactions.filter((i) => !(i[2] === p[1] && (i[0] === p[0] || i[1] === p[0])));
       S.paths.splice(selected.i, 1); selected = null; render(); }, "danger");
   } else if (selected && selected.type === "int" && S.interactions[selected.i]) {
     const it = S.interactions[selected.i]; sep();
     const lab = document.createElement("span"); lab.textContent = "Interaction " + it[0] + " × " + it[1] + " → " + it[2]; tb.appendChild(lab);
-    btn("Supprimer", () => { S.interactions.splice(selected.i, 1); selected = null; render(); }, "danger");
+    btn(L("Supprimer"), () => { S.interactions.splice(selected.i, 1); selected = null; render(); }, "danger");
   }
   const m = document.createElement("span"); m.id = "msg"; m.textContent = msg; m.className = msgErr ? "err" : ""; tb.appendChild(m);
-  btn("Appliquer au modèle ▶", apply, "primary");
+  btn(L("Appliquer au modèle ▶"), apply, "primary");
 
   // nœuds
   const cv = $("canvas");
@@ -252,11 +299,11 @@ function render() {
     const el = document.createElement("div");
     el.className = "lv" + (lv.mode === "B" ? " formative" : "") + (lv.children.length ? " hoc" : "") + (selected && selected.type === "lv" && selected.name === lv.name ? " sel" : "");
     el.style.left = lv.x + "px"; el.style.top = lv.y + "px"; el.dataset.name = lv.name;
-    el.innerHTML = `<span class="name"></span><span class="mode">${lv.children.length ? "ordre sup. · " : ""}${lv.mode === "B" ? "formatif" : "réflectif"}</span><div class="inds"></div><div class="handle" title="Glisser vers une autre variable pour créer un chemin"></div>`;
+    el.innerHTML = `<span class="name"></span><span class="mode">${lv.children.length ? L("ordre sup. · ") : ""}${lv.mode === "B" ? L("formatif") : L("réflectif")}</span><div class="inds"></div><div class="handle" title="${L("Glisser vers une autre variable pour créer un chemin")}"></div>`;
     el.querySelector(".name").textContent = lv.name;
     const inds = el.querySelector(".inds");
     if (!lv.indicators.length && !lv.children.length) inds.innerHTML = '<span class="empty">dépose des indicateurs ici</span>';
-    lv.children.forEach((c) => { const s = document.createElement("span"); s.className = "comp"; s.textContent = c; s.title = "Composante — cliquer pour retirer";
+    lv.children.forEach((c) => { const s = document.createElement("span"); s.className = "comp"; s.textContent = c; s.title = L("Composante — cliquer pour retirer");
       s.addEventListener("mousedown", (e) => e.stopPropagation());
       s.addEventListener("click", (e) => { e.stopPropagation(); lv.children = lv.children.filter((x) => x !== c); render(); });
       inds.appendChild(s); });

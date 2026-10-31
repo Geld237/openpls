@@ -163,7 +163,7 @@ def test_app_mga_two_groups():
 
 def test_app_higher_order_example():
     at = _app().run()
-    at.sidebar.radio(key="source").set_value("Exemple de second ordre").run()
+    at.sidebar.radio(key="source").set_value("example_hoc").run()
     assert "QUALITE =~ L1 + L2 + L3" in at.text_area(key="syntax").value
     for method in ("two_stage_disjoint", "repeated_indicators"):
         at.sidebar.selectbox(key="hoc_method").set_value(method).run()
@@ -245,7 +245,7 @@ def test_navigation_follows_the_workflow():
     assert at.session_state["page"] == "Modèle"
     _btn(at, "Estimer").click().run()
     assert at.session_state["page"] == "Résultats"
-    at.sidebar.radio(key="source").set_value("Exemple de second ordre").run()
+    at.sidebar.radio(key="source").set_value("example_hoc").run()
     assert at.session_state["page"] == "Modèle"
     assert not at.exception, at.exception
 
@@ -340,3 +340,35 @@ def test_edge_labels_have_opaque_background():
     edges = [l for l in dot.splitlines() if "->" in l and "label=" in l]
     assert edges and all('BGCOLOR="#F5F7FA"' in l for l in edges)
     assert "outputorder=edgesfirst" in dot
+
+
+def test_every_interface_text_has_an_english_translation():
+    import ast
+    from pathlib import Path
+
+    from openpls.i18n_en import EN
+
+    root = Path(__file__).resolve().parent.parent / "openpls"
+    missing = []
+    for f in root.glob("*.py"):
+        for node in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "T" and node.args
+                    and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+                if node.args[0].value not in EN:
+                    missing.append(f"{f.name}: {node.args[0].value[:70]}")
+    assert not missing, "\n".join(missing)
+
+
+def test_app_runs_in_english(monkeypatch):
+    monkeypatch.setenv("OPENPLS_LANG", "en")
+    monkeypatch.setenv("OPENPLS_DECIMAL", ".")
+    at = _app(auto_boot=True)
+    at.session_state["n_boot"] = 100
+    at.run()
+    assert not at.exception, at.exception
+    assert any("Estimate the model" in b.label for b in at.button)
+    _btn(at, "Estimate").click().run()
+    assert not at.exception, at.exception
+    assert "Path coefficients" in [s.value for s in at.subheader]
+    paths = next(df.value for df in at.dataframe if df.value.index.name == "path")
+    assert {"std. error", "sig."} <= set(paths.columns)
