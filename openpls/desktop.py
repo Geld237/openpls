@@ -162,7 +162,8 @@ def _run_window(url: str, server: subprocess.Popen, selftest: bool) -> bool:
         import inspect
 
         extra = {}  # icône de fenêtre (GTK/Qt ; Windows et macOS prennent celle de l'exécutable)
-        if "icon" in inspect.signature(webview.start).parameters:
+        # Windows (WinForms) n'accepte qu'un .ico et lève une exception .NET avec un PNG
+        if sys.platform.startswith("linux") and "icon" in inspect.signature(webview.start).parameters:
             extra["icon"] = str(_app_path().parent / "static" / "icon.png")
         webview.start(background, private_mode=False, **extra)
     except Exception as e:  # noqa: BLE001 - aucun moteur (Linux sans Qt/GTK, Windows sans WebView2…)
