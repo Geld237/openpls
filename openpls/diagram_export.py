@@ -132,7 +132,7 @@ from openpls.gui_helpers import add_dummy_columns, prepare_data
 SYNTAX = """{syntax.strip()}
 """
 
-raw = {reader}("{file_name}")          # adapte le chemin du fichier
+raw = {reader}({file_name!r})          # adapte le chemin du fichier
 raw = add_dummy_columns(raw.rename(columns=str), SYNTAX)
 model = Model.from_syntax(SYNTAX)
 data, notes = prepare_data(raw, model, missing="{missing}")
