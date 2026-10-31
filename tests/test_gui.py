@@ -283,7 +283,7 @@ def test_changing_threshold_keeps_bootstrap_and_stars():
     # le seuil choisi survit à un changement d'onglet et vaut pour la page Significativité
     at.radio(key="alpha").set_value(0.01).run()
     assert at.session_state["alpha_saved"] == 0.01
-    assert any("IC percentile à 99 %" in m.value for m in at.markdown)
+    assert any("IC à 99 %" in m.value for m in at.markdown)
 
 
 def test_significance_modes_on_diagram():
