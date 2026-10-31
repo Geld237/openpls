@@ -495,7 +495,8 @@ def test_project_with_results_autosave_and_recent(tmp_path, monkeypatch):
     _btn(at2, "Reprendre").click().run()
     assert not at2.exception, at2.exception
     assert at2.session_state["source"] == "project"
-    assert at2.session_state["page"] == "Résultats"
+    pages = ["Modèle", "Analyses préliminaires", "Résultats", "Significativité", "Analyses avancées", "Aide"]
+    assert at2.session_state["page"] == pages[proj["results"]["page"]]  # onglet où l'on s'était arrêté
     assert "Coefficients de chemin" in [s.value for s in at2.subheader]
     paths = next(df.value for df in at2.dataframe if df.value.index.name == "chemin")
     assert "t" in paths.columns  # bootstrap restauré
