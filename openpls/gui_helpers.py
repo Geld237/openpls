@@ -128,7 +128,7 @@ def _latent_positions(model: Model, positions: dict | None = None) -> dict[str, 
     lvs = list(model.latents)
     if positions and all(lv in positions for lv in lvs):
         # éditeur : pixels, origine en haut à gauche -> points, y vers le haut ; un peu d'air pour les indicateurs
-        return {lv: (1.6 * float(positions[lv][0]), -1.6 * float(positions[lv][1])) for lv in lvs}
+        return {lv: (1.1 * float(positions[lv][0]), -1.1 * float(positions[lv][1])) for lv in lvs}
     # couches : plus long chemin depuis les exogènes (composantes avant leur construit d'ordre supérieur)
     preds: dict[str, set] = {lv: set() for lv in lvs}
     for a, b in model.structural:

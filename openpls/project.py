@@ -11,7 +11,7 @@ import pandas as pd
 from . import __version__
 
 SETTINGS = ("algo", "scheme", "moderation", "hoc_method", "missing", "n_boot", "seed", "auto_boot", "boot_ci",
-            "alpha_saved", "sig_view")
+            "alpha_saved", "sig_view", "res_layout")
 
 
 def save_project(raw: pd.DataFrame, file_name: str, syntax: str, positions: dict | None, settings: dict,

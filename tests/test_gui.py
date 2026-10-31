@@ -520,3 +520,30 @@ def test_resume_offer_does_not_block_autosave(tmp_path, monkeypatch):
     _btn(at, "Estimer").click().run()
     assert not any("Reprendre le travail en cours" in m.value for m in at.markdown)
     assert pj.read_autosave()[1]["rows"] == 450  # la sauvegarde a repris
+
+
+def test_results_diagram_layout_spacing_and_export():
+    from openpls.diagram_component import diagram_data, display_positions, merge_layout
+    from openpls.diagram_export import render_layout
+
+    m = Model.from_syntax(SYNTAX)
+    dot = model_to_dot(m, fit(simulate(200, seed=3), m))
+    nodes, edges, auto = diagram_data(dot, m)
+    assert set(auto["lv"]) == {"lv:XI1", "lv:XI2", "lv:ETA1", "lv:ETA2"}
+    assert {n["owner"] for n in nodes if n["kind"] == "mv"} <= set(auto["lv"])
+    p1 = display_positions(nodes, auto, 1.0)
+    p2 = display_positions(nodes, auto, 0.5)
+    # espacement : latentes rapprochées, indicateurs à la même distance de leur latente
+    d = lambda P, a, b: ((P[a][0] - P[b][0]) ** 2 + (P[a][1] - P[b][1]) ** 2) ** 0.5  # noqa: E731
+    assert abs(d(p2, "lv:XI1", "lv:ETA2") - 0.5 * d(p1, "lv:XI1", "lv:ETA2")) < 1e-9
+    assert abs(d(p2, "lv:XI1", "mv:xi1_1") - d(p1, "lv:XI1", "mv:xi1_1")) < 1e-9
+    # disposition de l'utilisateur : déplacer une latente déplace ses indicateurs
+    saved = {"lv": {**auto["lv"], "lv:ETA1": [auto["lv"]["lv:ETA1"][0], auto["lv"]["lv:ETA1"][1] + 100]}, "off": {}}
+    p3 = display_positions(nodes, merge_layout(auto, saved), 1.0)
+    assert abs(p3["mv:eta1_1"][1] - p1["mv:eta1_1"][1] - 100) < 1e-9
+    png = render_layout(nodes, edges, p3, "png")
+    assert png[:4] == b"\x89PNG"
+    at = _app().run()
+    _btn(at, "Estimer").click().run()
+    assert not at.exception, at.exception
+    assert at.session_state["_diagram_cache"][1][:4] == b"\x89PNG"

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face { font-family:"IBM Plex Sans"; font-weight:400; src:url("/app/static/fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); }
+  @font-face { font-family:"IBM Plex Sans"; font-weight:600; src:url("/app/static/fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); }
+  html, body { margin:0; padding:0; background:transparent; font-family:"IBM Plex Sans", system-ui, sans-serif; color:#1C2B3A; }
+  #bar { display:flex; align-items:center; gap:14px; padding:4px 2px 8px; font-size:13px; color:#4A5A6C; flex-wrap:wrap; }
+  #bar label { display:flex; align-items:center; gap:8px; }
+  #bar input[type=range] { width:180px; accent-color:#2E5E9E; }
+  #bar button { font:inherit; font-size:12.5px; padding:4px 10px; border:1px solid #D8DEE8; background:#fff; border-radius:6px; cursor:pointer; color:#1C2B3A; }
+  #bar button:hover { border-color:#2E5E9E; }
+  #hint { margin-left:auto; font-size:12px; color:#6B7889; }
+  svg { display:block; width:100%; user-select:none; touch-action:none; }
+  .node { cursor:grab; }
+  .node.drag { cursor:grabbing; }
+  .node text { pointer-events:none; }
+  .lbl { pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <label><span id="t-space">Espacement</span> <input id="space" type="range" min="40" max="160" step="5"> <span id="spaceval"></span></label>
+  <button id="reset"></button>
+  <span id="hint"></span>
+</div>
+<svg id="svg"></svg>
+<script>
+const NS = "http://www.w3.org/2000/svg";
+function post(type, extra) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type }, extra), "*"); }
+post("streamlit:componentReady", { apiVersion: 1 });
+
+let A = null, version = null, base = null, spacing = 1, dragging = null;
+const svg = document.getElementById("svg");
+
+function textWidth(s, size) { return s.length * size * 0.56; }
+function nodeSize(n) {
+  const lines = n.label.split("\n");
+  const w = Math.max(...lines.map((l) => textWidth(l, n.kind === "lv" ? 13 : 11.5)));
+  if (n.kind === "lv") return { rx: Math.max(30, w / 2 + 16), ry: lines.length > 1 ? 24 : 18 };
+  if (n.kind === "ix") return { rx: Math.max(34, w / 2 + 18), ry: 20 };
+  return { rx: w / 2 + 8, ry: 11 };
+}
+// positions affichées : latentes rapprochées ou écartées autour du centre ; les autres gardent leur décalage
+function display() {
+  const P = {}, lv = Object.keys(base.lv);
+  const cx = lv.reduce((s, k) => s + base.lv[k][0], 0) / lv.length;
+  const cy = lv.reduce((s, k) => s + base.lv[k][1], 0) / lv.length;
+  lv.forEach((k) => { P[k] = [cx + spacing * (base.lv[k][0] - cx), cy + spacing * (base.lv[k][1] - cy)]; });
+  A.nodes.forEach((n) => {
+    if (!(n.id in base.lv)) { const o = P[n.owner] || [0, 0], d = base.off[n.id] || [0, 0]; P[n.id] = [o[0] + d[0], o[1] + d[1]]; }
+  });
+  return P;
+}
+function clip(p, q, n, S) {   // point du bord de la forme n (centre p) sur le segment p -> q
+  const dx = q[0] - p[0], dy = q[1] - p[1], L = Math.hypot(dx, dy) || 1;
+  let t;
+  if (n.kind === "mv") t = Math.min(S.rx / Math.abs(dx || 1e-9), S.ry / Math.abs(dy || 1e-9));
+  else t = 1 / Math.sqrt((dx * dx) / (S.rx * S.rx) + (dy * dy) / (S.ry * S.ry));
+  t = Math.min(t, 0.45);
+  return [p[0] + dx * t, p[1] + dy * t, L];
+}
+function el(tag, attrs, parent) { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); (parent || svg).appendChild(e); return e; }
+
+function draw() {
+  const P = display(), sizes = {};
+  A.nodes.forEach((n) => { sizes[n.id] = nodeSize(n); });
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  A.nodes.forEach((n) => { const p = P[n.id], s = sizes[n.id]; x0 = Math.min(x0, p[0] - s.rx); x1 = Math.max(x1, p[0] + s.rx); y0 = Math.min(y0, p[1] - s.ry); y1 = Math.max(y1, p[1] + s.ry); });
+  const m = 24; x0 -= m; y0 -= m; x1 += m; y1 += m;
+  const W = x1 - x0, H = y1 - y0;
+  svg.setAttribute("viewBox", `${x0} ${y0} ${W} ${H}`);
+  // la feuille s'ajuste au contenu : hauteur = largeur disponible × proportions du diagramme
+  const avail = document.body.clientWidth || 900;
+  const h = Math.max(220, Math.min(A.max_height || 900, avail * H / W));
+  svg.setAttribute("height", h);
+  post("streamlit:setFrameHeight", { height: h + document.getElementById("bar").offsetHeight + 6 });
+  svg.innerHTML = "";
+  const defs = el("defs", {});
+  const colors = [...new Set(A.edges.map((e) => e.color))];
+  colors.forEach((c, i) => {
+    const mk = el("marker", { id: "a" + i, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse", markerUnits: "userSpaceOnUse" }, defs);
+    el("path", { d: "M0,0 L10,5 L0,10 z", fill: c }, mk);
+  });
+  const nodeById = {}; A.nodes.forEach((n) => { nodeById[n.id] = n; });
+  const gE = el("g", {}), gL = el("g", {}), gN = el("g", {});
+  A.edges.forEach((e) => {
+    const na = nodeById[e.a], nb = nodeById[e.b]; if (!na || !nb) return;
+    const pa = clip(P[e.a], P[e.b], na, sizes[e.a]), pb = clip(P[e.b], P[e.a], nb, sizes[e.b]);
+    el("line", { x1: pa[0], y1: pa[1], x2: pb[0], y2: pb[1], stroke: e.color, "stroke-width": 0.9 * e.width,
+                 "stroke-dasharray": e.dashed ? "5 4" : "", "marker-end": `url(#a${colors.indexOf(e.color)})` }, gE);
+    if (e.label) {
+      const mx = (pa[0] + pb[0]) / 2, my = (pa[1] + pb[1]) / 2, size = e.small ? 10.5 : 11.5;
+      const tw = textWidth(e.label, size);
+      el("rect", { x: mx - tw / 2 - 2, y: my - size * 0.65, width: tw + 4, height: size * 1.3, fill: A.paper, class: "lbl" }, gL);
+      const t = el("text", { x: mx, y: my + size * 0.36, "text-anchor": "middle", "font-size": size, fill: e.fontcolor, class: "lbl" }, gL);
+      t.textContent = e.label;
+    }
+  });
+  A.nodes.forEach((n) => {
+    const p = P[n.id], s = sizes[n.id], g = el("g", { class: "node", "data-id": n.id, transform: `translate(${p[0]},${p[1]})` }, gN);
+    if (n.kind === "mv") el("rect", { x: -s.rx, y: -s.ry, width: 2 * s.rx, height: 2 * s.ry, fill: n.fill, stroke: n.stroke, "stroke-width": 1 }, g);
+    else if (n.kind === "ix") el("polygon", { points: `${-s.rx},0 0,${-s.ry} ${s.rx},0 0,${s.ry}`, fill: n.fill, stroke: n.stroke, "stroke-width": 1 }, g);
+    else {
+      if (n.double) el("ellipse", { rx: s.rx + 4, ry: s.ry + 4, fill: "none", stroke: n.stroke, "stroke-width": 1 }, g);
+      el("ellipse", { rx: s.rx, ry: s.ry, fill: n.fill, stroke: n.stroke, "stroke-width": 1.5 }, g);
+    }
+    const lines = n.label.split("\n");
+    lines.forEach((ln, i) => {
+      const size = n.kind === "lv" ? (i === 0 ? 13 : 11) : 11.5;
+      const t = el("text", { y: (i - (lines.length - 1) / 2) * 15 + size * 0.36, "text-anchor": "middle", "font-size": size,
+                             "font-weight": n.kind === "lv" && i === 0 ? 600 : 400, fill: i === 0 ? "#1C2B3A" : "#4A5A6C" }, g);
+      t.textContent = ln;
+    });
+    g.addEventListener("pointerdown", (ev) => startDrag(ev, n, g));
+  });
+}
+
+function svgPoint(ev) { const pt = svg.createSVGPoint(); pt.x = ev.clientX; pt.y = ev.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); }
+function startDrag(ev, n, g) {
+  ev.preventDefault(); document.body.style.cursor = "grabbing";
+  const p0 = svgPoint(ev);
+  dragging = { n, p0, free: n.id in base.lv, start: (n.id in base.lv ? base.lv[n.id] : (base.off[n.id] || [0, 0])).slice(), moved: false };
+  // le dessin est recréé à chaque mouvement : on écoute la fenêtre, pas l'élément déplacé
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", endDrag, { once: true });
+}
+function onMove(ev) {
+  if (!dragging) return;
+  const p = svgPoint(ev), dx = p.x - dragging.p0.x, dy = p.y - dragging.p0.y;
+  if (Math.abs(dx) + Math.abs(dy) > 1) dragging.moved = true;
+  if (dragging.free) base.lv[dragging.n.id] = [dragging.start[0] + dx / spacing, dragging.start[1] + dy / spacing];
+  else base.off[dragging.n.id] = [dragging.start[0] + dx, dragging.start[1] + dy];
+  draw();
+}
+function endDrag() {
+  window.removeEventListener("pointermove", onMove); document.body.style.cursor = "";
+  if (dragging && dragging.moved) send();
+  dragging = null;
+}
+function send() { post("streamlit:setComponentValue", { value: { lv: base.lv, off: base.off, spacing, nonce: Date.now() }, dataType: "json" }); }
+
+const space = document.getElementById("space");
+space.addEventListener("input", () => { spacing = space.value / 100; document.getElementById("spaceval").textContent = space.value + " %"; draw(); });
+space.addEventListener("change", send);
+document.getElementById("reset").addEventListener("click", () => {
+  base = JSON.parse(JSON.stringify(A.auto)); spacing = A.auto_spacing; space.value = Math.round(spacing * 100);
+  document.getElementById("spaceval").textContent = space.value + " %"; draw();
+  post("streamlit:setComponentValue", { value: { reset: true, nonce: Date.now() }, dataType: "json" });
+});
+
+window.addEventListener("message", (ev) => {
+  const d = ev.data; if (!d || d.type !== "streamlit:render") return;
+  A = d.args;
+  document.getElementById("t-space").textContent = A.text.spacing;
+  document.getElementById("reset").textContent = A.text.reset;
+  document.getElementById("hint").textContent = A.text.hint;
+  if (A.version !== version) {   // nouveau diagramme venant de Python
+    version = A.version;
+    base = JSON.parse(JSON.stringify(A.layout)); spacing = A.spacing;
+    space.value = Math.round(spacing * 100); document.getElementById("spaceval").textContent = space.value + " %";
+  }
+  draw();
+});
+window.addEventListener("resize", () => { if (A) draw(); });
+</script>
+</body>
+</html>

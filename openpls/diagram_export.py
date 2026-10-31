@@ -46,70 +46,100 @@ def parse_dot(dot: str) -> tuple[dict, list]:
     return nodes, edges
 
 
-def render(dot: str, fmt: str = "png") -> bytes:
-    """Dessine le diagramme (positions fixées) et renvoie le fichier PNG ou SVG."""
+def _node_size(n: dict) -> tuple[float, float]:
+    """Demi-largeur et demi-hauteur, comme dans le composant interactif (pixels = points)."""
+    lines = n["label"].split("\n")
+    size = 13 if n["kind"] == "lv" else 11.5
+    w = max(len(s) * size * 0.56 for s in lines)
+    if n["kind"] == "lv":
+        return max(30.0, w / 2 + 16), (24.0 if len(lines) > 1 else 18.0)
+    if n["kind"] == "ix":
+        return max(34.0, w / 2 + 18), 20.0
+    return w / 2 + 8, 11.0
+
+
+def _clip(p, q, n, rx, ry):
+    import math
+
+    dx, dy = q[0] - p[0], q[1] - p[1]
+    if n["kind"] == "mv":
+        t = min(rx / abs(dx or 1e-9), ry / abs(dy or 1e-9))
+    else:
+        t = 1 / math.sqrt((dx * dx) / (rx * rx) + (dy * dy) / (ry * ry) + 1e-12)
+    t = min(t, 0.45)
+    return p[0] + dx * t, p[1] + dy * t
+
+
+def render_layout(nodes: list, edges: list, P: dict, fmt: str = "png", paper: str = "white") -> bytes:
+    """Dessine le diagramme aux positions `P` (pixels, y vers le bas) ; 1 pixel = 1 point, comme à l'écran."""
     import io
 
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Ellipse, FancyArrowPatch, FancyBboxPatch, Polygon
+    from matplotlib.patches import Ellipse, FancyArrowPatch, Polygon, Rectangle
 
-    nodes, edges = parse_dot(dot)
-    if not nodes:
-        raise ValueError("diagramme sans positions")
-    xs = [n["x"] for n in nodes.values()]
-    ys = [n["y"] for n in nodes.values()]
-    w, h = max(xs) - min(xs) + 2.4, max(ys) - min(ys) + 1.6
-    fig, ax = plt.subplots(figsize=(max(w, 4), max(h, 2.5)))
-    ax.set_xlim(min(xs) - 1.2, max(xs) + 1.2)
-    ax.set_ylim(min(ys) - 0.8, max(ys) + 0.8)
-    ax.set_aspect("equal")
+    sizes = {n["id"]: _node_size(n) for n in nodes}
+    xs0 = min(P[n["id"]][0] - sizes[n["id"]][0] for n in nodes) - 24
+    xs1 = max(P[n["id"]][0] + sizes[n["id"]][0] for n in nodes) + 24
+    ys0 = min(P[n["id"]][1] - sizes[n["id"]][1] for n in nodes) - 24
+    ys1 = max(P[n["id"]][1] + sizes[n["id"]][1] for n in nodes) + 24
+    fig = plt.figure(figsize=((xs1 - xs0) / 72, (ys1 - ys0) / 72))
+    ax = fig.add_axes((0, 0, 1, 1))
+    ax.set_xlim(xs0, xs1)
+    ax.set_ylim(ys1, ys0)  # y vers le bas, comme à l'écran
     ax.axis("off")
-    patches = {}
-    for nid, n in nodes.items():
-        lines = n["label"].split("\n")
-        width = max(0.55, 0.075 * max(len(s) for s in lines) + 0.25)
-        if n["shape"] == "box":
-            bw, bh = 0.07 * len(lines[0]) + 0.16, 0.24
-            p = FancyBboxPatch((n["x"] - bw / 2, n["y"] - bh / 2), bw, bh, boxstyle="square,pad=0",
-                               fc=n["fill"], ec=n["color"], lw=0.8, zorder=3)
-            fs = 7.5
-        elif n["shape"] == "diamond":
-            dw, dh = width * 0.6, 0.3
-            p = Polygon([(n["x"] - dw, n["y"]), (n["x"], n["y"] + dh), (n["x"] + dw, n["y"]), (n["x"], n["y"] - dh)],
-                        closed=True, fc=n["fill"], ec=n["color"], lw=0.9, zorder=3)
-            fs = 7.5
-        else:
-            eh = 0.42 if len(lines) == 1 else 0.58
-            p = Ellipse((n["x"], n["y"]), width * 1.15, eh, fc=n["fill"], ec=n["color"], lw=1.3, zorder=3)
-            if n["double"]:
-                ax.add_patch(Ellipse((n["x"], n["y"]), width * 1.15 + 0.1, eh + 0.1, fc="none", ec=n["color"],
-                                     lw=1.0, zorder=3))
-            fs = 9
-        ax.add_patch(p)
-        patches[nid] = p
-        ax.text(n["x"], n["y"], n["label"], ha="center", va="center", fontsize=fs, color="#1C2B3A", zorder=5,
-                linespacing=1.15)
+    byid = {n["id"]: n for n in nodes}
     for e in edges:
-        if e["a"] not in nodes or e["b"] not in nodes:
+        if e["a"] not in P or e["b"] not in P:
             continue
-        a, b = nodes[e["a"]], nodes[e["b"]]
-        arr = FancyArrowPatch((a["x"], a["y"]), (b["x"], b["y"]), patchA=patches[e["a"]], patchB=patches[e["b"]],
-                              arrowstyle="-|>", mutation_scale=9 + 2 * e["width"], color=e["color"],
-                              lw=0.8 * e["width"], linestyle="--" if e["dashed"] else "-", zorder=2,
-                              shrinkA=1, shrinkB=1)
-        ax.add_patch(arr)
+        na, nb = byid[e["a"]], byid[e["b"]]
+        pa = _clip(P[e["a"]], P[e["b"]], na, *sizes[e["a"]])
+        pb = _clip(P[e["b"]], P[e["a"]], nb, *sizes[e["b"]])
+        ax.add_patch(FancyArrowPatch(pa, pb, arrowstyle="-|>", mutation_scale=9, color=e["color"],
+                                     lw=0.9 * e["width"], linestyle=(0, (5, 4)) if e["dashed"] else "-",
+                                     shrinkA=0, shrinkB=0, zorder=1))
         if e["label"]:
-            mx, my = (a["x"] + b["x"]) / 2, (a["y"] + b["y"]) / 2
-            ax.text(mx, my, e["label"].replace("\n", " "), ha="center", va="center", fontsize=7.5,
-                    color=e["fontcolor"], zorder=4,
-                    bbox={"boxstyle": "square,pad=0.08", "fc": "white", "ec": "none"})
+            fs = 10.5 if e.get("small") else 11.5
+            ax.text((pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, e["label"].replace("\n", " "), ha="center",
+                    va="center", fontsize=fs, color=e["fontcolor"], zorder=2,
+                    bbox={"boxstyle": "square,pad=0.1", "fc": paper, "ec": "none"})
+    for n in nodes:
+        (x, y), (rx, ry) = P[n["id"]], sizes[n["id"]]
+        if n["kind"] == "mv":
+            ax.add_patch(Rectangle((x - rx, y - ry), 2 * rx, 2 * ry, fc=n["fill"], ec=n["stroke"], lw=1, zorder=3))
+        elif n["kind"] == "ix":
+            ax.add_patch(Polygon([(x - rx, y), (x, y - ry), (x + rx, y), (x, y + ry)], closed=True, fc=n["fill"],
+                                 ec=n["stroke"], lw=1, zorder=3))
+        else:
+            if n.get("double"):
+                ax.add_patch(Ellipse((x, y), 2 * rx + 8, 2 * ry + 8, fc="none", ec=n["stroke"], lw=1, zorder=3))
+            ax.add_patch(Ellipse((x, y), 2 * rx, 2 * ry, fc=n["fill"], ec=n["stroke"], lw=1.5, zorder=3))
+        lines = n["label"].split("\n")
+        for i, ln in enumerate(lines):
+            fs = (13 if i == 0 else 11) if n["kind"] == "lv" else 11.5
+            ax.text(x, y + (i - (len(lines) - 1) / 2) * 15, ln, ha="center", va="center", fontsize=fs, zorder=4,
+                    fontweight="semibold" if n["kind"] == "lv" and i == 0 else "normal",
+                    color="#1C2B3A" if i == 0 else "#4A5A6C")
     buf = io.BytesIO()
-    fig.savefig(buf, format=fmt, dpi=300 if fmt == "png" else None, bbox_inches="tight", facecolor="white")
+    fig.savefig(buf, format=fmt, dpi=300 if fmt == "png" else None, facecolor=paper)
     plt.close(fig)
     return buf.getvalue()
+
+
+def render(dot: str, fmt: str = "png") -> bytes:
+    """Export du DOT à positions fixées (disposition automatique)."""
+    nodes_raw, edges = parse_dot(dot)
+    if not nodes_raw:
+        raise ValueError("diagramme sans positions")
+    nodes = [{"id": k, "kind": k.split(":", 1)[0] if k.split(":", 1)[0] in ("lv", "mv", "ix") else "mv",
+              "label": n["label"], "fill": n["fill"], "stroke": n["color"], "double": n["double"]}
+             for k, n in nodes_raw.items()]
+    for e in edges:
+        e["small"] = e["a"].startswith("mv:") or e["b"].startswith("mv:")
+    P = {k: (72 * n["x"], -72 * n["y"]) for k, n in nodes_raw.items()}
+    return render_layout(nodes, edges, P, fmt)
 
 
 def python_script(syntax: str, file_name: str, fit_kwargs: dict, missing: str, n_boot: int, seed: int) -> str:

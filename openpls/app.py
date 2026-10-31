@@ -756,14 +756,29 @@ with page_res:
         _mode = st.session_state.get("sig_view", "stars")
         diagram_dot = model_to_dot(model, res, positions=st.session_state.get("editor_pos"), boot=boot,
                                    label_mode=_mode, alpha=alpha)
-        st.graphviz_chart(diagram_dot, width="stretch")
-        from openpls.diagram_export import render as _render_diagram
+        from openpls.diagram_component import results_diagram
+        from openpls.diagram_export import render_layout as _render_layout
 
-        _dkey = ("diagram", hash(diagram_dot))
+        try:  # diagramme interactif : variables déplaçables, espacement, feuille ajustée au contenu
+            _nodes, _edges, _P = results_diagram(
+                diagram_dot, model, signature=repr((st.session_state["syntax"],
+                                                    sorted((st.session_state.get("editor_pos") or {}).items()))),
+                texts={"spacing": T("Espacement"), "reset": T("Disposition automatique"),
+                       "hint": T("Glisse une variable pour la déplacer ; ses indicateurs la suivent.")})
+        except Exception:  # noqa: BLE001 - composant indisponible : diagramme statique
+            _nodes = None
+            st.graphviz_chart(diagram_dot, width="stretch")
+        _dkey = ("diagram", hash(diagram_dot), repr(_P) if _nodes else None)
         if st.session_state.get("_diagram_cache", (None,))[0] != _dkey:
             try:
-                st.session_state["_diagram_cache"] = (_dkey, _render_diagram(diagram_dot, "png"),
-                                                      _render_diagram(diagram_dot, "svg"))
+                if _nodes:
+                    _png = _render_layout(_nodes, _edges, _P, "png")
+                    _svg = _render_layout(_nodes, _edges, _P, "svg")
+                else:
+                    from openpls.diagram_export import render as _render_diagram
+
+                    _png, _svg = _render_diagram(diagram_dot, "png"), _render_diagram(diagram_dot, "svg")
+                st.session_state["_diagram_cache"] = (_dkey, _png, _svg)
             except Exception:  # noqa: BLE001 - export indisponible pour ce diagramme
                 st.session_state["_diagram_cache"] = (_dkey, None, None)
         _, _png, _svg = st.session_state["_diagram_cache"]

@@ -812,3 +812,6 @@ EN.update({
     "Les résultats enregistrés sont illisibles : données et modèle ont été ouverts, estime à nouveau le modèle.":
         "The saved results are unreadable: data and model were opened; estimate the model again.",
 })
+EN.update({"Espacement": "Spacing", "Disposition automatique": "Automatic layout",
+           "Glisse une variable pour la déplacer ; ses indicateurs la suivent.":
+               "Drag a variable to move it; its indicators follow."})
