@@ -458,3 +458,144 @@ def translate(text: str) -> str:
         if pat.match(text):
             return pat.sub(rep, text)
     return text
+
+# ---------------------------------------------------------------- analyses préliminaires et aide
+EN.update({
+    "Calculées sur les données brutes ({n} lignes), indicateurs regroupés par construit. À examiner avant "
+    "d'interpréter le modèle.":
+        "Computed on the raw data ({n} rows), indicators grouped by construct. Check them before interpreting the model.",
+    "openpls_preliminaires.xlsx": "openpls_preliminary.xlsx",
+    "Aucun indicateur numérique à analyser.": "No numeric indicator to analyse.",
+    "Statistiques descriptives": "Descriptive statistics",
+    "Manquants et aberrants": "Missing values and outliers",
+    "Normalité": "Normality",
+    "Corrélations": "Correlations",
+    "Biais de méthode commune": "Common method bias",
+    "Taille d'échantillon": "Sample size",
+    "Figures": "Figures",
+    "Aplatissement = excès de kurtosis (0 pour une loi normale). Rouge : |asymétrie| > 2 ou |aplatissement| > 7 "
+    "(Curran, West & Finch 1996 ; Kline 2016). PLS-SEM ne suppose pas la normalité, mais une distribution très "
+    "asymétrique mérite d'être signalée.":
+        "Kurtosis = excess kurtosis (0 for a normal distribution). Red: |skewness| > 2 or |kurtosis| > 7 (Curran, "
+        "West & Finch 1996; Kline 2016). PLS-SEM does not assume normality, but a strongly skewed distribution is "
+        "worth reporting.",
+    "Lignes complètes": "Complete rows",
+    "Valeurs manquantes": "Missing values",
+    "Rouge : plus de 5 % de valeurs manquantes. L'estimation utilise la suppression par liste (lignes incomplètes "
+    "retirées) sauf si tu choisis un autre traitement dans la barre latérale.":
+        "Red: more than 5% missing values. Estimation uses listwise deletion (incomplete rows removed) unless you "
+        "choose another treatment in the sidebar.",
+    "Valeurs aberrantes multivariées": "Multivariate outliers",
+    "**{k}** observation(s) aberrante(s) sur {n} (distance de Mahalanobis, p < 0,001).":
+        "**{k}** outlying observation(s) out of {n} (Mahalanobis distance, p < 0.001).",
+    "Les 20 distances les plus grandes. Numéro d'observation = ligne du fichier (à partir de 0). Vérifie ces réponses "
+    "avant de les retirer : une valeur extrême n'est pas forcément une erreur.":
+        "The 20 largest distances. Observation number = file row (starting at 0). Check these responses before "
+        "removing them: an extreme value is not necessarily an error.",
+    "Indicateur": "Indicator",
+    "Coefficient": "Coefficient",
+    "Variance du premier facteur": "Variance of the first factor",
+    "Facteurs de valeur propre > 1": "Factors with eigenvalue > 1",
+    "Colinéarité complète (Kock 2015)": "Full collinearity (Kock 2015)",
+    "Plus petit coefficient de chemin attendu |β_min|": "Smallest expected path coefficient |β_min|",
+    "n minimal (racine carrée inverse)": "minimum n (inverse square root)",
+    "n minimal (règle des 10 fois)": "minimum n (10-times rule)",
+    "n disponible (lignes complètes)": "available n (complete rows)",
+    "Méthode de la racine carrée inverse (Kock & Hadaya 2018) : taille minimale pour détecter |β_min| avec une "
+    "puissance de 80 %. La règle des 10 fois (10 × le plus grand nombre de flèches pointant vers un construit) est plus "
+    "ancienne et souvent trop optimiste.":
+        "Inverse square root method (Kock & Hadaya 2018): minimum size to detect |β_min| with 80% power. The "
+        "10-times rule (10 × the largest number of arrows pointing at a construct) is older and often too optimistic.",
+    "Construit": "Construct",
+    "Points rouges : valeurs au-delà de 1,5 écart interquartile. Les figures s'exportent en PNG (300 ppp) pour Word ou "
+    "en SVG pour une mise en page vectorielle.":
+        "Red dots: values beyond 1.5 interquartile ranges. Figures export as PNG (300 dpi) for Word or SVG for "
+        "vector layout.",
+    "Analyses préliminaires (Excel)": "Preliminary analyses (Excel)",
+    "PNG (300 ppp)": "PNG (300 dpi)",
+    "Test de Mardia": "Mardia's test",
+    "p < 0,05 : les données s'écartent de la normalité multivariée. C'est fréquent avec des échelles de Likert et "
+    "c'est une raison d'utiliser PLS-SEM avec un bootstrap plutôt qu'un CB-SEM par maximum de vraisemblance.":
+        "p < 0.05: the data depart from multivariate normality. This is common with Likert scales and is a reason "
+        "to use PLS-SEM with a bootstrap rather than maximum-likelihood CB-SEM.",
+    "Corrélations entre indicateurs": "Correlations between indicators",
+    "Test à un facteur de Harman : > 50 % suggère un biais de méthode commune (Podsakoff et al. 2003).":
+        "Harman's single-factor test: > 50% suggests common method bias (Podsakoff et al. 2003).",
+    "Le premier facteur explique plus de 50 % de la variance : biais de méthode commune possible.":
+        "The first factor explains more than 50% of the variance: common method bias is possible.",
+    "Le premier facteur explique moins de 50 % de la variance : pas de signe de biais de méthode commune selon le "
+    "test de Harman.":
+        "The first factor explains less than 50% of the variance: no sign of common method bias according to "
+        "Harman's test.",
+    "Éboulis des valeurs propres": "Scree plot",
+    "facteur": "factor",
+    "valeur propre": "eigenvalue",
+    "Disponible après l'estimation du modèle (onglet Modèle).": "Available after estimating the model (Model tab).",
+    "VIF de chaque variable latente régressée sur toutes les autres. Rouge : VIF > 3,3, signe possible de biais de "
+    "méthode commune ou de colinéarité (Kock 2015). Plus sensible que le test de Harman.":
+        "VIF of each latent variable regressed on all the others. Red: VIF > 3.3, a possible sign of common method "
+        "bias or collinearity (Kock 2015). More sensitive than Harman's test.",
+    "Après estimation : le plus petit chemin observé. Sinon, la plus petite valeur que tu veux pouvoir détecter.":
+        "After estimation: the smallest observed path. Otherwise, the smallest value you want to be able to detect.",
+    "Boîtes à moustaches — {g}": "Box plots — {g}",
+    "test": "test",
+    "Test de Mardia non calculable : {e}": "Mardia's test cannot be computed: {e}",
+    "loi normale": "normal distribution",
+    "Diagramme quantile-quantile": "Quantile-quantile plot",
+    "quantiles théoriques": "theoretical quantiles",
+    "quantiles observés": "observed quantiles",
+    "Asymétrie multivariée": "Multivariate skewness",
+    "Aplatissement multivarié": "Multivariate kurtosis",
+    "tous les indicateurs": "all indicators",
+    "indicateurs": "indicators",
+    "Rechercher dans l'aide": "Search help",
+    "Rubriques": "Topics",
+    "ex. HTMT, médiation": "e.g. HTMT, mediation",
+    "Aucune rubrique ne contient « {q} ».": "No topic contains “{q}”.",
+    "Rubrique suivante : {t}": "Next topic: {t}",
+    # colonnes des tableaux préliminaires
+    "manquants": "missing", "écart-type": "SD", "médiane": "median", "asymétrie": "skewness",
+    "aplatissement": "kurtosis", "Shapiro-Wilk p": "Shapiro-Wilk p", "non numériques": "non-numeric",
+    "% manquants": "% missing", "aberrante": "outlier", "observation": "observation",
+    "Descriptives": "Descriptives", "Manquants": "Missing", "Correlations": "Correlations",
+    "VIF complet": "Full VIF",
+})
+
+# ---------------------------------------------------------------- menu du haut
+EN.update({
+    "À propos d’OpenPLS": "About OpenPLS",
+    "**Version {v}**  \nModélisation par équations structurelles (PLS-SEM, PLSc, CB-SEM), libre et open source.":
+        "**Version {v}**  \nFree and open-source structural equation modeling (PLS-SEM, PLSc, CB-SEM).",
+    "Les données restent sur ton ordinateur : OpenPLS ne les envoie nulle part. Seule la recherche de mises à jour "
+    "contacte GitHub, et seulement quand tu la demandes.":
+        "Your data stays on your computer: OpenPLS never sends it anywhere. Only the update check contacts GitHub, "
+        "and only when you ask for it.",
+    "**Licence** : MIT. Tu peux utiliser, modifier et redistribuer OpenPLS librement, y compris pour des travaux "
+    "publiés.":
+        "**License**: MIT. You may use, modify and redistribute OpenPLS freely, including for published work.",
+    "**Citer OpenPLS** : OpenPLS contributors ({y}). *OpenPLS* (version {v}) [logiciel]. https://github.com/{r}":
+        "**Cite OpenPLS**: OpenPLS contributors ({y}). *OpenPLS* (version {v}) [software]. https://github.com/{r}",
+    "Code source et documentation": "Source code and documentation",
+    "Composants": "Components",
+    "Rechercher des mises à jour": "Check for updates",
+    "Connexion à GitHub…": "Contacting GitHub…",
+    "Impossible de joindre GitHub. Vérifie ta connexion, ou consulte la page des versions.":
+        "Could not reach GitHub. Check your connection, or visit the releases page.",
+    "Page des versions": "Releases page",
+    "Une nouvelle version est disponible : **{new}** (publiée le {d}). Tu utilises la {cur}.":
+        "A new version is available: **{new}** (released {d}). You are using {cur}.",
+    "Télécharger la version {v}": "Download version {v}",
+    "Sous Windows, lance le nouvel installateur : il remplace l'ancienne version et garde tes réglages.":
+        "On Windows, run the new installer: it replaces the old version and keeps your settings.",
+    "OpenPLS {v} est à jour.": "OpenPLS {v} is up to date.",
+    "Paramètres": "Settings",
+    "Langue de l'interface": "Interface language",
+    "Échantillons bootstrap par défaut": "Default bootstrap samples",
+    "Valeur proposée au démarrage. 5 000 est recommandé pour les résultats publiés.":
+        "Value proposed at start-up. 5,000 is recommended for published results.",
+    "Les réglages sont enregistrés sur cet ordinateur et repris au prochain lancement.":
+        "Settings are saved on this computer and restored at the next launch.",
+    "Fermer": "Close",
+    "À propos": "About",
+    "Mises à jour": "Updates",
+})

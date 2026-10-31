@@ -33,11 +33,16 @@ st.set_page_config(page_title="OpenPLS", page_icon=str(_HERE / "static" / "icon.
 st.html(f"<style>{(_HERE / 'style.css').read_text(encoding='utf-8')}</style>")
 if "lang" not in st.session_state:
     st.session_state["lang"] = ui_language()
+for _k, _v in st.session_state.pop("_carry", {}).items():  # valeurs des widgets après un changement de langue
+    st.session_state[_k] = _v
 set_language(st.session_state["lang"])
 if "decimal" not in st.session_state:
     st.session_state["decimal"] = decimal_separator()
 set_decimal(st.session_state["decimal"])
 st.logo(str(_HERE / "static" / "logo.svg"), size="large", icon_image=str(_HERE / "static" / "mark.svg"))
+from openpls import menu as _menu
+
+_menu.render()  # À propos, Mises à jour, Paramètres : en haut à droite, sur la ligne des onglets
 
 EXAMPLE_SYNTAX = T("# Modèle de mesure  ( =~ réflectif,  <~ formatif )") + """
 XI1  =~ xi1_1 + xi1_2 + xi1_3
@@ -104,6 +109,7 @@ def fmt(df, digits: int = 3):
     df = translate_df(df)
     cols = df.select_dtypes("number").columns
     formats = {c: (lambda v: "" if pd.isna(v) else fmt_p(v)) if _is_p(c)
+               else (lambda v: "" if pd.isna(v) else f"{int(v)}") if pd.api.types.is_integer_dtype(df[c])
                else (lambda v, d=digits: "" if pd.isna(v) else num(v, d)) for c in cols}
     return df.style.format(formats, na_rep="")
 
@@ -257,20 +263,11 @@ algo = st.sidebar.selectbox(T("Algorithme"), ["PLS", "PLSc (consistent)"], key="
 auto_boot = st.sidebar.checkbox(T("Calculer t et p automatiquement"), value=True, key="auto_boot",
                                 help=T("Lance le bootstrap juste après l'estimation : t, p, intervalles de confiance "
                                        "et étoiles de significativité apparaissent dans les tableaux et le diagramme."))
-n_boot = st.sidebar.number_input(T("Échantillons bootstrap"), 100, 20000, 1000, step=500, key="n_boot")
+n_boot = st.sidebar.number_input(T("Échantillons bootstrap"), 100, 20000, int(load_prefs().get("n_boot", 1000)),
+                                 step=500, key="n_boot")
 # seuil choisi au-dessus du diagramme des résultats ; gardé hors widget pour survivre aux changements de page
 alpha = st.session_state.setdefault("alpha_saved", 0.05)
-def _change_language():
-    save_pref("language", st.session_state["lang"])
-    if "decimal" not in load_prefs():  # séparateur non choisi explicitement : il suit la langue
-        st.session_state["decimal"] = separator_for(st.session_state["lang"])
-    st.session_state.pop("page", None)  # les noms d'onglets changent avec la langue
-
-
 with st.sidebar.expander(T("Options avancées")):
-    st.selectbox(T("Langue"), ["fr", "en"], key="lang", format_func={"fr": "Français", "en": "English"}.get,
-                 on_change=_change_language,
-                 help=T("Par défaut : la langue choisie à l'installation (ou celle du système)."))
     scheme = st.selectbox(T("Schéma de pondération interne"), ["path", "factorial", "centroid"], key="scheme")
     moderation = st.selectbox(
         T("Méthode de modération"), ["two_stage", "product_indicator", "orthogonal"], key="moderation",
@@ -285,11 +282,6 @@ with st.sidebar.expander(T("Options avancées")):
                      "repeated_indicators": T("Indicateurs répétés")}.get,
         help=T("Utilisée seulement si le modèle contient un construit d'ordre supérieur (`HOC =~ LV1 + LV2`)."))
     seed = int(st.number_input(T("Graine aléatoire"), 0, 10**6, 42, key="seed"))
-    st.selectbox(T("Séparateur décimal"), [",", "."], key="decimal",
-                 format_func={",": T("virgule (0,318)"), ".": T("point (0.318)")}.get,
-                 on_change=lambda: save_pref("decimal", st.session_state["decimal"]),
-                 help=T("Par défaut : celui de la langue de l'interface. Ici : {sep}.",
-                        sep=T("virgule") if default_decimal() == "," else T("point")))
 
 # ---------------------------------------------------------------- définition du modèle
 raw = raw.rename(columns=str)  # en-têtes numériques (fréquents dans Excel) -> texte, comme dans la syntaxe
@@ -441,6 +433,16 @@ with page_model:
             st.graphviz_chart(model_to_dot(model, res, positions=st.session_state.get("editor_pos"), boot=boot, label_mode=label_mode, alpha=alpha), width="stretch")
             if res is None:
                 st.caption(T("Clique sur « Estimer le modèle » pour afficher les estimations sur le diagramme."))
+
+with page_prelim:
+    from openpls import page_prelim as _prelim
+
+    _prelim.render(raw, model, res, numeric_cols, fmt, flag, offer_file)
+
+with page_help:
+    from openpls import page_help as _help
+
+    _help.render()
 
 if res is None:
     for _p in (page_res, page_sig, page_adv):

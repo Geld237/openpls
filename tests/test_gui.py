@@ -372,3 +372,15 @@ def test_app_runs_in_english(monkeypatch):
     assert "Path coefficients" in [s.value for s in at.subheader]
     paths = next(df.value for df in at.dataframe if df.value.index.name == "path")
     assert {"std. error", "sig."} <= set(paths.columns)
+
+
+def test_top_menu_and_update_check(monkeypatch):
+    from openpls import menu
+
+    assert menu.update_status("0.7.5", "0.8.0") == "newer"
+    assert menu.update_status("0.8.0", "0.8.0") == "current"
+    assert menu.update_status("0.10.0", "0.9.9") == "current"
+    at = _app().run()
+    labels = [b.label for b in at.button]
+    assert {"À propos", "Mises à jour", "Paramètres"} <= set(labels)
+    assert not at.exception, at.exception

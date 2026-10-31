@@ -146,3 +146,22 @@ dl.opls-summary > div {
 
 /* soulignement animé natif : remplacé par l'ombre intérieure (barre) et la pastille (sous-onglets) */
 .stTabs [role="tablist"] > div:not([role="tab"]) { display: none; }
+
+/* ---------- menu du haut (À propos, Mises à jour, Paramètres), sur la ligne des onglets ---------- */
+.st-key-topmenu {
+  position: fixed;
+  top: 0;
+  right: 3.25rem;
+  height: var(--bar-h);
+  width: auto !important;
+  z-index: 999991;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.st-key-topmenu button p { font-size: 0.88rem; color: var(--ink-2); }
+.st-key-topmenu button:hover p { color: var(--ink); }
+@media (max-width: 1100px) {
+  .st-key-topmenu button p { display: none; }  /* icônes seules sur petit écran */
+}
+/* le menu, sorti du flux, laisse un écart vertical : la barre d'onglets le reprend */
+.st-key-page { margin-top: -1rem; }
