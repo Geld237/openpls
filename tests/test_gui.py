@@ -59,10 +59,12 @@ def test_prepare_data_listwise():
 
 
 # ------------------------------------------------------------------ application complète
-def _app():
+def _app(auto_boot: bool = False):
     from streamlit.testing.v1 import AppTest
 
-    return AppTest.from_file(APP, default_timeout=120)
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.session_state["auto_boot"] = auto_boot  # bootstrap automatique coupé sauf test dédié (rapidité)
+    return at
 
 
 def _btn(at, label):
@@ -74,7 +76,9 @@ def test_app_example_end_to_end():
     assert not at.exception, at.exception
     _btn(at, "Estimer").click().run()
     assert not at.exception, at.exception
-    assert any("Résultats" in t.value for t in at.title)
+    # après l'estimation, l'application bascule sur l'onglet Résultats
+    assert at.session_state["page"] == "Résultats"
+    assert "Coefficients de chemin" in [s.value for s in at.subheader]
     at.number_input(key="n_boot").set_value(200).run()
     _btn(at, "bootstrap").click().run()
     assert not at.exception, at.exception
@@ -195,3 +199,52 @@ def test_desktop_mode_saves_exports_to_documents(tmp_path, monkeypatch):
     sheets = pd.read_excel(files[0], sheet_name=None)
     assert "Chemins" in sheets and "Qualite" in sheets
     assert any("Enregistré" in s.value for s in at.sidebar.success)
+
+
+def test_auto_bootstrap_shows_t_p_and_stars():
+    """Après « Estimer », t, p, IC et étoiles apparaissent dans le tableau des chemins et le diagramme."""
+    at = _app(auto_boot=True)
+    at.session_state["n_boot"] = 200
+    at.run()
+    _btn(at, "Estimer").click().run()
+    assert not at.exception, at.exception
+    paths = next(df.value for df in at.dataframe if df.value.index.name == "chemin")
+    assert {"t", "p", "sig."} <= set(paths.columns)
+    assert paths.loc["ETA1 -> ETA2", "p"] < 0.001 and paths.loc["ETA1 -> ETA2", "sig."] == "***"
+    assert paths.loc["XI1 -> ETA1", "t"] > 2
+    dot = " ".join(g.proto.spec for g in at.get("graphviz_chart"))
+    assert "***" in dot and "#2E5E9E" in dot
+    loads = next(df.value for df in at.dataframe if "t (chargement)" in df.value.columns)
+    assert (loads["sig. chargement"] == "***").all()
+    # affichage des p sur le diagramme
+    at.radio(key="diag_mode").set_value("p").run()
+    dot = " ".join(g.proto.spec for g in at.get("graphviz_chart"))
+    assert "(p < 0.001)" in dot
+
+
+def test_dot_marks_nonsignificant_paths():
+    from openpls import bootstrap_statistics
+    from openpls.assessment import measurement_statistics
+    from openpls.effects import effect_statistics
+
+    d = simulate(300, seed=2)          # XI1 -> ETA2 vaut 0 dans le vrai modèle
+    m = Model.from_syntax(SYNTAX.replace("ETA2 ~ ETA1", "ETA2 ~ ETA1 + XI1"))
+    r = fit(d, m)
+    b = bootstrap_statistics(d, m, lambda x: pd.concat([effect_statistics(x), measurement_statistics(x)]),
+                             n_boot=100)
+    dot = model_to_dot(m, r, boot=b)
+    line = next(l for l in dot.splitlines() if '"lv:XI1" -> "lv:ETA2"' in l)
+    assert "style=dashed" in line and " ns" in line
+    sig = next(l for l in dot.splitlines() if '"lv:ETA1" -> "lv:ETA2"' in l)
+    assert "***" in sig and "#2E5E9E" in sig
+
+
+def test_navigation_follows_the_workflow():
+    """Estimer -> onglet Résultats ; changer de données -> retour à l'onglet Modèle."""
+    at = _app().run()
+    assert at.session_state["page"] == "Modèle"
+    _btn(at, "Estimer").click().run()
+    assert at.session_state["page"] == "Résultats"
+    at.sidebar.radio(key="source").set_value("Exemple de second ordre").run()
+    assert at.session_state["page"] == "Modèle"
+    assert not at.exception, at.exception

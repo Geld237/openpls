@@ -17,7 +17,8 @@ import streamlit as st
 from openpls import Model, fit, bootstrap_statistics, quality_criteria, htmt, fornell_larcker, f_squared
 from openpls.effects import classify_mediation, effect_statistics, total_effects, specific_indirect_effects
 from openpls.editor import model_editor
-from openpls.gui_helpers import guess_syntax, model_to_dot, prepare_data, to_excel
+from openpls.assessment import measurement_statistics
+from openpls.gui_helpers import fmt_p, guess_syntax, model_to_dot, prepare_data, stars, to_excel
 from openpls.higher_order import higher_order_measurement, higher_order_statistics, structural_view
 from openpls.moderation import simple_slopes, simple_slope_statistics
 from openpls.simulate import simulate, simulate_higher_order
@@ -53,11 +54,18 @@ RED = "color:#C0392B;font-weight:600"
 
 
 # ---------------------------------------------------------------- utilitaires d'affichage
+def _is_p(col) -> bool:
+    c = str(col)
+    return c in ("p", "p_value") or c.startswith(("p (", "p_", "p "))
+
+
 def fmt(df, digits: int = 3):
+    """Mise en forme unique : `digits` décimales ; colonnes de p-values en « < 0.001 » / 3 décimales."""
     if isinstance(df, pd.Series):
         df = df.to_frame()
     num = df.select_dtypes("number").columns
-    return df.style.format({c: f"{{:.{digits}f}}" for c in num}, na_rep="")
+    formats = {c: (lambda v: "" if pd.isna(v) else fmt_p(v)) if _is_p(c) else f"{{:.{digits}f}}" for c in num}
+    return df.style.format(formats, na_rep="")
 
 
 def flag(df: pd.DataFrame, rules: dict, digits: int = 3):
@@ -147,6 +155,18 @@ def offer_file(label: str, data, filename: str, key: str, mime: str = "text/plai
             open_folder(Path(last).parent)
 
 
+def boot_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Tableau de bootstrap présenté en français, avec étoiles de significativité."""
+    lo = next(c for c in df.columns if str(c).startswith("ci_"))
+    hi = [c for c in df.columns if str(c).startswith("ci_")][-1]
+    out = pd.DataFrame({
+        "coefficient": df["estimate"], "sig.": df["p_value"].map(stars), "t": df["t_value"], "p": df["p_value"],
+        "erreur-type": df["std_error"], "moyenne bootstrap": df["boot_mean"],
+        f"IC {float(lo[3:]) * 100:g} %": df[lo], f"IC {float(hi[3:]) * 100:g} %": df[hi],
+    }, index=df.index)
+    return out
+
+
 def run_button(label: str, key: str) -> bool:
     return st.button(f"▶  {label}", key=key, type="primary")
 
@@ -196,11 +216,13 @@ hoc_method = st.sidebar.selectbox(
                  "two_stage_embedded": "Deux étapes, intégrée", "repeated_indicators": "Indicateurs répétés"}.get,
     help="Utilisée seulement si le modèle contient un construit d'ordre supérieur (`HOC =~ LV1 + LV2`).")
 n_boot = st.sidebar.number_input("Échantillons bootstrap", 100, 20000, 1000, step=500, key="n_boot")
+auto_boot = st.sidebar.checkbox("Calculer t et p automatiquement", value=True, key="auto_boot",
+                                help="Lance le bootstrap juste après l'estimation : t, p, intervalles de confiance "
+                                     "et étoiles de significativité apparaissent dans les tableaux et le diagramme.")
 alpha = st.sidebar.selectbox("Seuil de significativité", [0.05, 0.01, 0.10], key="alpha")
 seed = int(st.sidebar.number_input("Graine aléatoire", 0, 10**6, 42, key="seed"))
 
 # ---------------------------------------------------------------- définition du modèle
-st.title("Modèle")
 raw = raw.rename(columns=str)  # en-têtes numériques (fréquents dans Excel) -> texte, comme dans la syntaxe
 numeric_cols = [c for c in raw.columns if pd.api.types.is_numeric_dtype(raw[c])]
 if st.session_state.get("data_id") != data_id:
@@ -216,99 +238,166 @@ if st.session_state.get("data_id") != data_id:
         st.session_state["syntax"] = {"example": EXAMPLE_SYNTAX, "example_hoc": HOC_SYNTAX}.get(
             data_id, guess_syntax(numeric_cols) if data_id.startswith("file:") else EXAMPLE_SYNTAX)
         st.session_state.pop("editor_pos", None)
-elif "syntax" not in st.session_state:  # état du widget perdu (passage sans zone de texte)
-    st.session_state["syntax"] = st.session_state.get("syntax_saved", EXAMPLE_SYNTAX)
     for k in ("results", "boot", "adv", "boot_table"):
         st.session_state.pop(k, None)
+    st.session_state["page"] = "Modèle"  # nouvelles données : retour à la définition du modèle
+elif "syntax" not in st.session_state:  # état du widget perdu (passage sans zone de texte)
+    st.session_state["syntax"] = st.session_state.get("syntax_saved", EXAMPLE_SYNTAX)
 
-with st.expander(f"Aperçu des données — {raw.shape[0]} lignes × {raw.shape[1]} colonnes"):
-    st.dataframe(raw.head(50), width="stretch")
-    st.caption("Colonnes : " + ", ".join(map(str, raw.columns)))
+# ---------------------------------------------------------------- navigation
+PAGES = ["Modèle", "Résultats", "Significativité", "Analyses avancées"]
+if "_goto" in st.session_state:  # bascule automatique (ex. vers Résultats après l'estimation)
+    st.session_state["page"] = st.session_state.pop("_goto")
+page_model, page_res, page_sig, page_adv = st.tabs(PAGES, key="page", on_change="rerun")
 
-tab_editor, tab_syntax = st.tabs(["Éditeur visuel", "Syntaxe"])
-with tab_editor:
-    st.caption("Glisse les indicateurs sur le canevas · tire la poignée bleue d'une variable vers une autre pour "
-               "créer un chemin · clique un chemin pour ajouter un modérateur · pour un construit d'ordre supérieur, "
-               "crée une variable vide puis « + Composante » · enfin « Appliquer au modèle ».")
-    # une instance d'éditeur par jeu de données : sa dernière valeur ne doit jamais être réappliquée
-    # à d'autres données (elle porterait l'ancienne syntaxe)
-    out = model_editor(numeric_cols, st.session_state["syntax"], st.session_state.get("editor_pos"),
-                       key=f"editor:{data_id}")
-    applied = st.session_state.setdefault("editor_applied", set())
-    if out and out.get("nonce") not in applied:
-        applied.add(out["nonce"])
-        st.session_state["editor_pos"] = {k: tuple(v) for k, v in out.get("positions", {}).items()}
-        st.session_state["syntax"] = out["syntax"]
+with page_model:
+    with st.expander(f"Aperçu des données — {raw.shape[0]} lignes × {raw.shape[1]} colonnes"):
+        st.dataframe(raw.head(50), width="stretch")
+        st.caption("Colonnes : " + ", ".join(map(str, raw.columns)))
 
-with tab_syntax:
-    left, right = st.columns([2, 3])
-    with left:
-        st.text_area("Syntaxe du modèle", key="syntax", height=320,
-                     help="`LATENTE =~ ind1 + ind2` (réflectif) · `LATENTE <~ ind1 + ind2` (formatif) · "
-                          "`CIBLE ~ SOURCE1 + SOURCE2` (chemins) · `CIBLE ~ X + M + X:M` (modération) · "
-                          "`HOC =~ LV1 + LV2` (ordre supérieur : les termes sont des variables latentes). "
-                          "`#` pour les commentaires.")
+    tab_editor, tab_syntax = st.tabs(["Éditeur visuel", "Syntaxe"])
+    with tab_editor:
+        st.caption("Glisse les indicateurs sur le canevas · tire la poignée bleue d'une variable vers une autre pour "
+                   "créer un chemin · clique un chemin pour ajouter un modérateur · pour un construit d'ordre supérieur, "
+                   "crée une variable vide puis « + Composante » · enfin « Appliquer au modèle ».")
+        # une instance d'éditeur par jeu de données : sa dernière valeur ne doit jamais être réappliquée
+        # à d'autres données (elle porterait l'ancienne syntaxe)
+        out = model_editor(numeric_cols, st.session_state["syntax"], st.session_state.get("editor_pos"),
+                           key=f"editor:{data_id}")
+        applied = st.session_state.setdefault("editor_applied", set())
+        if out and out.get("nonce") not in applied:
+            applied.add(out["nonce"])
+            st.session_state["editor_pos"] = {k: tuple(v) for k, v in out.get("positions", {}).items()}
+            st.session_state["syntax"] = out["syntax"]
 
-st.session_state["syntax_saved"] = st.session_state["syntax"]  # copie hors widget (survit aux passages sans lui)
-try:
-    model = Model.from_syntax(st.session_state["syntax"])
-    data, warns = prepare_data(raw, model)
-    if not model.structural:
-        warns.append("Aucun chemin structurel : ajoute au moins une ligne `CIBLE ~ SOURCE`.")
-    ok = bool(model.structural)
-    model_error = None
-except (ValueError, KeyError) as e:
-    model, data, warns, ok, model_error = None, None, [], False, str(e).strip("'\"")
+    with tab_syntax:
+        left, right = st.columns([2, 3])
+        with left:
+            st.text_area("Syntaxe du modèle", key="syntax", height=320,
+                         help="`LATENTE =~ ind1 + ind2` (réflectif) · `LATENTE <~ ind1 + ind2` (formatif) · "
+                              "`CIBLE ~ SOURCE1 + SOURCE2` (chemins) · `CIBLE ~ X + M + X:M` (modération) · "
+                              "`HOC =~ LV1 + LV2` (ordre supérieur : les termes sont des variables latentes). "
+                              "`#` pour les commentaires.")
 
-fit_kwargs = dict(scheme=scheme, consistent=algo.startswith("PLSc"))
-if model is not None and model.interactions:
-    fit_kwargs["moderation"] = moderation
-if model is not None and model.higher_order:
-    fit_kwargs["hoc_method"] = hoc_method
-
-if model_error:
-    st.error(model_error)
-for w in warns:
-    st.warning(w)
-run = st.button("▶  Estimer le modèle", type="primary", disabled=not ok)
-
-res = None
-if run and ok:
+    st.session_state["syntax_saved"] = st.session_state["syntax"]  # copie hors widget (survit aux passages sans lui)
     try:
-        res = fit(data, model, **fit_kwargs)
-        st.session_state["results"] = (st.session_state["syntax"], fit_kwargs, res, data, data_id)
-        st.session_state.pop("boot", None)
-    except Exception as e:  # noqa: BLE001 - message lisible pour l'utilisateur
-        st.error(f"Échec de l'estimation : {e}")
+        model = Model.from_syntax(st.session_state["syntax"])
+        data, warns = prepare_data(raw, model)
+        if not model.structural:
+            warns.append("Aucun chemin structurel : ajoute au moins une ligne `CIBLE ~ SOURCE`.")
+        ok = bool(model.structural)
+        model_error = None
+    except (ValueError, KeyError) as e:
+        model, data, warns, ok, model_error = None, None, [], False, str(e).strip("'\"")
 
-prev = st.session_state.get("results")
-if prev and prev[0] == st.session_state["syntax"] and prev[1] == fit_kwargs and prev[4] == data_id:
-    _, _, res, data, _ = prev
+    fit_kwargs = dict(scheme=scheme, consistent=algo.startswith("PLSc"))
+    if model is not None and model.interactions:
+        fit_kwargs["moderation"] = moderation
+    if model is not None and model.higher_order:
+        fit_kwargs["hoc_method"] = hoc_method
 
-with right:
-    if model is not None:
-        st.graphviz_chart(model_to_dot(model, res), width="stretch")
-        if res is None:
-            st.caption("Clique sur « Estimer le modèle » pour afficher les estimations sur le diagramme.")
+    if model_error:
+        st.error(model_error)
+    for w in warns:
+        st.warning(w)
+    run = st.button("▶  Estimer le modèle", type="primary", disabled=not ok)
+
+    res = None
+    if run and ok:
+        try:
+            res = fit(data, model, **fit_kwargs)
+            st.session_state["results"] = (st.session_state["syntax"], fit_kwargs, res, data, data_id)
+            st.session_state.pop("boot", None)
+        except Exception as e:  # noqa: BLE001 - message lisible pour l'utilisateur
+            st.error(f"Échec de l'estimation : {e}")
+
+    prev = st.session_state.get("results")
+    if prev and prev[0] == st.session_state["syntax"] and prev[1] == fit_kwargs and prev[4] == data_id:
+        _, _, res, data, _ = prev
+
+    # ---------------------------------------------------------------- bootstrap (t, p, IC)
+    def boot_stats(r):
+        parts = [effect_statistics(r), measurement_statistics(r)]
+        if r.spec is not None and r.spec.interactions:
+            parts.append(simple_slope_statistics(r))
+        if r.spec is not None and r.spec.higher_order:
+            parts.append(higher_order_statistics(r))
+        return pd.concat(parts)
+
+
+    def boot_key():
+        return (st.session_state["syntax"], fit_kwargs, int(n_boot), alpha, seed)
+
+
+    def current_boot():
+        b = st.session_state.get("boot")
+        return b[5] if b and b[:5] == boot_key() and b[6] == data_id else None
+
+
+    def run_bootstrap() -> None:
+        bar = st.progress(0.0, text="Bootstrap (t et p)…")
+        try:
+            import warnings as _w
+
+            with _w.catch_warnings():
+                _w.simplefilter("ignore")
+                bt = bootstrap_statistics(
+                    data, model, boot_stats, n_boot=int(n_boot), seed=seed, alpha=alpha,
+                    progress=lambda i, n: bar.progress(i / n, text=f"Bootstrap (t et p) {i}/{n}")
+                    if i % 25 == 0 or i == n else None,
+                    **fit_kwargs,
+                )
+            st.session_state["boot"] = boot_key() + (bt, data_id)
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Échec du bootstrap : {e}")
+        bar.empty()
+
+
+    if run and ok and res is not None and auto_boot:
+        run_bootstrap()
+    if run and ok and res is not None:
+        st.session_state["_goto"] = "Résultats"  # on montre directement les résultats
+        st.rerun()
+    boot = current_boot() if res is not None else None
+    label_mode = st.session_state.get("diag_mode", "stars")
+
+    with right:
+        if model is not None:
+            st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=label_mode), width="stretch")
+            if res is None:
+                st.caption("Clique sur « Estimer le modèle » pour afficher les estimations sur le diagramme.")
 
 if res is None:
+    for _p in (page_res, page_sig, page_adv):
+        _p.info("Clique sur « ▶ Estimer le modèle » dans l'onglet **Modèle** pour afficher les résultats.")
     st.stop()
 
 # ---------------------------------------------------------------- résultats
-st.title("Résultats")
-conv_res = res.measurement_result  # en deux étapes : l'itératif PLS est celui de l'étape 1
-status = "convergé" if res.converged and conv_res.converged else "NON convergé"
-if res.moderation in ("product_indicator", "orthogonal") and fit_kwargs.get("consistent"):
-    st.warning("Avec PLSc, seule la modération en deux étapes est corrigée de l'atténuation (Becker et al. 2018) ; "
-               "les approches par produit d'indicateurs sous-estiment l'effet d'interaction.")
-mod_txt = (f" · modération : {res.moderation}" if res.moderation else "") + (
-    f" · ordre supérieur : {res.hoc_method}" if res.hoc_method else "")
-st.caption(f"{'PLSc' if res.consistent else 'PLS'} · schéma {scheme} · {status} en {conv_res.iterations} itérations · "
-           f"n = {len(data)}{mod_txt}")
-if status != "convergé":
-    st.error("L'algorithme n'a pas convergé : vérifie la spécification du modèle.")
-with st.expander("Diagramme estimé", expanded=False):
-    st.graphviz_chart(model_to_dot(model, res), width="stretch")
+with page_res:
+    conv_res = res.measurement_result  # en deux étapes : l'itératif PLS est celui de l'étape 1
+    status = "convergé" if res.converged and conv_res.converged else "NON convergé"
+    if res.moderation in ("product_indicator", "orthogonal") and fit_kwargs.get("consistent"):
+        st.warning("Avec PLSc, seule la modération en deux étapes est corrigée de l'atténuation (Becker et al. 2018) ; "
+                   "les approches par produit d'indicateurs sous-estiment l'effet d'interaction.")
+    mod_txt = (f" · modération : {res.moderation}" if res.moderation else "") + (
+        f" · ordre supérieur : {res.hoc_method}" if res.hoc_method else "")
+    st.caption(f"{'PLSc' if res.consistent else 'PLS'} · schéma {scheme} · {status} en {conv_res.iterations} itérations · "
+               f"n = {len(data)}{mod_txt}")
+    if status != "convergé":
+        st.error("L'algorithme n'a pas convergé : vérifie la spécification du modèle.")
+    with st.expander("Diagramme estimé", expanded=True):
+        if boot is not None:
+            st.radio("Sur les flèches", ["stars", "p", "t"], horizontal=True, key="diag_mode",
+                     format_func={"stars": "coefficient et étoiles", "p": "coefficient et p", "t": "coefficient et t"}.get)
+        st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=st.session_state.get("diag_mode", "stars")),
+                          width="stretch")
+        if boot is not None:
+            st.caption("*** p < 0,001 · ** p < 0,01 · * p < 0,05 · ns = non significatif (bootstrap, "
+                       f"{boot.attrs.get('n_boot_ok', '')} tirages). Bleu : effet positif significatif · rouge : effet "
+                       "négatif significatif · gris pointillé : non significatif. L'épaisseur suit la taille de l'effet.")
+        else:
+            st.caption("Les t et p (et les étoiles) apparaissent après le bootstrap : coche « Calculer t et p "
+                       "automatiquement » dans la barre latérale, ou lance-le dans l'onglet Significativité.")
 
 meas = res.measurement_result
 sres = structural_view(res)  # sans les relations HOC <-> composantes (indicateurs répétés)
@@ -316,6 +405,26 @@ q = quality_criteria(meas)
 paths_tbl = pd.DataFrame(
     [{"chemin": f"{s} -> {d}", "coefficient": res.path_coefficients.loc[s, d]} for s, d in sres.model.structural]
 ).set_index("chemin")
+
+
+def with_inference(tbl: pd.DataFrame, kind: str, keys: list[str]) -> pd.DataFrame:
+    """Ajoute t, p, IC et étoiles (bootstrap) à un tableau d'estimations."""
+    if boot is None:
+        return tbl
+    lo, hi = boot.columns[-2], boot.columns[-1]
+    rows = [boot.loc[(kind, k)] if (kind, k) in boot.index else None for k in keys]
+    tbl = tbl.copy()
+    tbl["erreur-type"] = [r["std_error"] if r is not None else np.nan for r in rows]
+    tbl["t"] = [r["t_value"] if r is not None else np.nan for r in rows]
+    tbl["p"] = [r["p_value"] if r is not None else np.nan for r in rows]
+    tbl[f"IC {lo[3:]}"] = [r[lo] if r is not None else np.nan for r in rows]
+    tbl[f"IC {hi[3:]}"] = [r[hi] if r is not None else np.nan for r in rows]
+    tbl["sig."] = [stars(r["p_value"]) if r is not None else "" for r in rows]
+    first = [c for c in tbl.columns if c not in ("sig.", "t", "p", "erreur-type") and not str(c).startswith("IC")]
+    return tbl[first + ["sig.", "t", "p", "erreur-type"] + [c for c in tbl.columns if str(c).startswith("IC")]]
+
+
+paths_tbl = with_inference(paths_tbl, "direct", list(paths_tbl.index))
 loadings_tbl = pd.DataFrame({"chargement": meas.outer_loadings, "poids": meas.outer_weights})
 loadings_tbl = loadings_tbl[~loadings_tbl.index.get_level_values(0).isin(list(model.higher_order))]
 htmt_tbl = htmt(meas)
@@ -324,16 +433,31 @@ endogenous = list(sres.r_squared.index)
 hoc_eval = higher_order_measurement(res) if model.higher_order else None
 excel_extra: dict[str, pd.DataFrame] = {}
 
-tabs = st.tabs(["Modèle structurel", "Modèle de mesure", "Validité discriminante",
-                "Bootstrap & médiation", "Analyses avancées", "Scores"])
+_sub = page_res.tabs(["Modèle structurel", "Modèle de mesure", "Validité discriminante", "Scores"])
+# anciens onglets -> nouvelle organisation : Significativité et Analyses avancées sont des onglets principaux
+tabs = [_sub[0], _sub[1], _sub[2], page_sig, page_adv, _sub[3]]
 
 with tabs[0]:
+    st.subheader("Coefficients de chemin")
+    if boot is None:
+        st.info("t, p et étoiles : coche « Calculer t et p automatiquement » dans la barre latérale, ou :")
+        if st.button("▶  Calculer t et p", key="run_boot_paths"):
+            run_bootstrap()
+            st.rerun()
+        st.dataframe(fmt(paths_tbl), width="stretch")
+    else:
+        sig_style = lambda v: "font-weight:700;color:#2E5E9E" if v not in ("", "ns") else "color:#6b6a66"  # noqa: E731
+        sty = fmt(paths_tbl).map(lambda v: "font-weight:700" if pd.notna(v) and v < 0.05 else "color:#6b6a66",
+                                 subset=["p"]).map(sig_style, subset=["sig."])
+        st.dataframe(sty, width="stretch")
+        st.caption("*** p < 0,001 · ** p < 0,01 · * p < 0,05 · ns non significatif. t et p par bootstrap "
+                   f"({boot.attrs.get('n_boot_ok', '')} tirages) ; intervalle de confiance percentile.")
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Coefficients de chemin")
-        st.dataframe(fmt(paths_tbl), width="stretch")
         st.subheader("R²")
         st.dataframe(fmt(sres.r_squared.rename("R²").to_frame()), width="stretch")
+        st.subheader("Effets totaux")
+        st.dataframe(fmt(total_effects(res).loc[:, endogenous]), width="stretch")
     with c2:
         st.subheader("Taille d'effet f²")
         try:
@@ -343,8 +467,6 @@ with tabs[0]:
                        "Pour une interaction : 0,005 faible · 0,01 moyen · 0,025 fort (Kenny 2018).")
         except Exception as e:  # noqa: BLE001
             st.info(f"f² non calculable : {e}")
-        st.subheader("Effets totaux")
-        st.dataframe(fmt(total_effects(res).loc[:, endogenous]), width="stretch")
         ind = specific_indirect_effects(res)
         if len(ind):
             st.subheader("Effets indirects spécifiques")
@@ -382,6 +504,14 @@ with tabs[1]:
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Chargements et poids externes")
+        if boot is not None:
+            keys_l = [f"{lv} -> {ind}" for lv, ind in loadings_tbl.index]
+            keys_w = [f"{ind} -> {lv}" for lv, ind in loadings_tbl.index]
+            inf_l = with_inference(pd.DataFrame(index=loadings_tbl.index), "outer_loading", keys_l)
+            inf_w = with_inference(pd.DataFrame(index=loadings_tbl.index), "outer_weight", keys_w)
+            loadings_tbl = loadings_tbl.assign(**{"t (chargement)": inf_l["t"], "p (chargement)": inf_l["p"],
+                                                  "sig. chargement": inf_l["sig."], "t (poids)": inf_w["t"],
+                                                  "p (poids)": inf_w["p"], "sig. poids": inf_w["sig."]})
         st.dataframe(flag(loadings_tbl, {"chargement": lambda v: v < 0.708}), width="stretch", height=420)
         st.caption("Rouge : chargement < 0,708 (Hair et al.). Pour un bloc formatif, regarde plutôt les poids.")
     with c2:
@@ -419,36 +549,11 @@ with tabs[3]:
     st.write(f"Bootstrap à **{int(n_boot)}** échantillons, IC percentile à {int((1 - alpha) * 100)} %. "
              "Peut prendre de quelques secondes à quelques minutes.")
 
-    def boot_stats(r):
-        parts = [effect_statistics(r)]
-        if r.spec is not None and r.spec.interactions:
-            parts.append(simple_slope_statistics(r))
-        if r.spec is not None and r.spec.higher_order:
-            parts.append(higher_order_statistics(r))
-        return pd.concat(parts)
-
     if st.button("▶  Lancer le bootstrap", key="run_boot"):
-        bar = st.progress(0.0, text="Bootstrap…")
-        try:
-            import warnings as _w
+        run_bootstrap()
+        st.rerun()
 
-            with _w.catch_warnings():
-                _w.simplefilter("ignore")
-                boot = bootstrap_statistics(
-                    data, model, boot_stats, n_boot=int(n_boot), seed=seed, alpha=alpha,
-                    progress=lambda i, n: bar.progress(i / n, text=f"Bootstrap {i}/{n}")
-                    if i % 25 == 0 or i == n else None,
-                    **fit_kwargs,
-                )
-            st.session_state["boot"] = (st.session_state["syntax"], fit_kwargs, int(n_boot), alpha, seed, boot,
-                                        data_id)
-        except Exception as e:  # noqa: BLE001
-            st.error(f"Échec du bootstrap : {e}")
-        bar.empty()
-
-    b = st.session_state.get("boot")
-    if b and b[:5] == (st.session_state["syntax"], fit_kwargs, int(n_boot), alpha, seed) and b[6] == data_id:
-        boot = b[5]
+    if boot is not None:
         if boot.attrs.get("failure_rate", 0) > 0.05:
             st.error("Inférence NON fiable — " + " · ".join(boot.attrs["warnings"]) +
                      ". Essaie le PLS classique (au lieu de PLSc), un échantillon plus grand ou un modèle de mesure "
@@ -462,12 +567,13 @@ with tabs[3]:
         labels = {"direct": "Effets directs (coefficients de chemin)", "specific_indirect": "Effets indirects spécifiques",
                   "total_indirect": "Effets indirects totaux", "total": "Effets totaux",
                   "simple_slope": "Pentes simples (modération)",
+                  "outer_loading": "Chargements externes", "outer_weight": "Poids externes",
                   "hoc_loading": "Chargements des composantes (ordre supérieur)",
                   "hoc_weight": "Poids des composantes (ordre supérieur)"}
         for kind, title in labels.items():
             if kind in boot_view.index.get_level_values(0):
                 st.subheader(title)
-                st.dataframe(fmt(boot_view.loc[kind]), width="stretch")
+                st.dataframe(fmt(boot_display(boot_view.loc[kind])), width="stretch")
 
         rows = []
         for name in boot.loc["specific_indirect"].index if "specific_indirect" in boot.index.get_level_values(0) else []:

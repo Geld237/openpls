@@ -62,7 +62,7 @@ with sync_playwright() as p:
     btn = pg.get_by_role("button", name="Estimer le modèle")
     assert btn.is_enabled(), "le bouton Estimer est désactivé après changement de données"
     btn.click()
-    pg.wait_for_selector("h1:has-text('Résultats')", timeout=60000)
+    pg.wait_for_selector("h3:has-text('Coefficients de chemin')", timeout=60000)
 
     # 4. régression (audit) : un fichier corrigé de même nom et même taille efface les résultats,
     #    mais conserve le modèle saisi
@@ -81,9 +81,9 @@ with sync_playwright() as p:
     model_txt = "XI1 =~ xi1_1 + xi1_2 + xi1_3\nETA1 =~ eta1_1 + eta1_2 + eta1_3\nETA1 ~ XI1"
     pg.locator("textarea").fill(model_txt); pg.locator("textarea").press("Control+Enter"); time.sleep(3)
     pg.get_by_role("button", name="Estimer le modèle").click()
-    pg.wait_for_selector("h1:has-text('Résultats')", timeout=60000); time.sleep(2)
+    pg.wait_for_selector("h3:has-text('Coefficients de chemin')", timeout=60000); time.sleep(2)
     pg.set_input_files("input[type=file]", str(tmp / "v2" / "enquete.csv")); time.sleep(6)
-    assert pg.locator("h1:has-text('Résultats')").count() == 0, "résultats du fichier précédent encore affichés"
+    assert pg.locator("h3:has-text('Coefficients de chemin')").count() == 0, "résultats du fichier précédent encore affichés (onglet Résultats)"
     pg.get_by_role("tab", name="Syntaxe").click(); time.sleep(1)
     assert pg.locator("textarea").input_value().startswith("XI1 =~ xi1_1"), "modèle saisi perdu"
 

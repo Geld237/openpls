@@ -4,7 +4,7 @@ Implémentation **libre et open source** du PLS-SEM (*Partial Least Squares Stru
 
 Le code est une **réimplémentation indépendante, écrite à partir de la littérature scientifique publiée**. Il ne contient aucun code, fichier ni ressource d'un logiciel propriétaire.
 
-## Fonctionnalités (v0.5)
+## Fonctionnalités (v0.6)
 
 | | |
 |---|---|
@@ -15,7 +15,7 @@ Le code est une **réimplémentation indépendante, écrite à partir de la litt
 | Validité discriminante | HTMT, Fornell-Larcker |
 | Modèle structurel | Coefficients de chemin, R², f², effets totaux |
 | Médiation | Effets indirects spécifiques (y compris en série), indirects totaux, typologie de Zhao et al. (2010) |
-| Inférence | Bootstrap : SE, t, p-values, IC percentiles, sur tous les effets |
+| Inférence | Bootstrap automatique à l'estimation : erreur-type, t, p, IC percentiles et étoiles sur les chemins, chargements, poids et effets ; diagramme coloré (bleu/rouge = significatif, gris pointillé = non significatif) |
 | Modération | Termes d'interaction `X:M` : deux étapes, produit des indicateurs, orthogonalisation ; pentes simples |
 | Ordre supérieur | Construits de second ordre réflectifs ou formatifs : deux étapes (disjointe, intégrée), indicateurs répétés ; chargements, poids, VIF, fiabilité du construit |
 | Prédiction | PLSpredict (Q²_predict, RMSE, MAE vs régression linéaire), CVPAT |
@@ -77,8 +77,8 @@ Le navigateur s'ouvre sur `http://localhost:8501`. Ensuite :
    - pour un construit d'ordre supérieur, crée une variable vide, sélectionne-la et ajoute ses composantes avec **+ Composante**.
 
    Termine par **Appliquer au modèle**. Tu peux aussi écrire directement la syntaxe dans l'onglet *Syntaxe*.
-3. **Estimer le modèle**, puis **Lancer le bootstrap** dans l'onglet *Bootstrap & médiation*.
-4. L'onglet *Analyses avancées* regroupe PLSpredict/CVPAT, MGA/MICOM, IPMA, NCA, endogénéité, CB-SEM/CFA et FIMIX-PLS.
+3. **Estimer le modèle** : OpenPLS calcule aussi t et p (bootstrap) et bascule sur l'onglet **Résultats** — diagramme avec étoiles, tableaux des chemins, du modèle de mesure, de validité discriminante et des scores.
+4. L'onglet **Significativité** détaille le bootstrap et l'analyse de médiation ; l'onglet **Analyses avancées** regroupe PLSpredict/CVPAT, MGA/MICOM, IPMA, NCA, endogénéité, CB-SEM/CFA et FIMIX-PLS.
 5. Exporte tous les résultats en Excel depuis la barre latérale.
 
 ![Analyse multigroupe et MICOM](docs/mga.png)
@@ -162,7 +162,7 @@ Démo en ligne de commande : `python examples/demo.py` (ou `python examples/demo
 
 ## Validation
 
-`pytest` lance 122 tests, organisés en quatre familles. Ils couvrent environ 95 % du code de calcul ; pour le vérifier : `coverage run --source=openpls -m pytest && coverage report --omit="openpls/app.py,openpls/gui.py"`.
+`pytest` lance 126 tests, organisés en quatre familles. Ils couvrent environ 95 % du code de calcul ; pour le vérifier : `coverage run --source=openpls -m pytest && coverage report --omit="openpls/app.py,openpls/gui.py"`.
 
 **Cœur PLS**
 - OpenPLS concorde, à 10⁻¹⁰ près, avec une **implémentation de référence indépendante** (`tests/reference_pls.py`, écrite lors de l'audit externe), pour les trois schémas de pondération, avec 0, 1 ou 2 blocs formatifs.

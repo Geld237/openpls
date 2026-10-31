@@ -107,3 +107,16 @@ def f_squared(res, data, **fit_kwargs) -> pd.DataFrame:
             r2_out = sub.r_squared[dst]
         rows.append({"path": f"{src} -> {dst}", "f2": (r2_in - r2_out) / (1 - r2_in)})
     return pd.DataFrame(rows).set_index("path")
+
+
+def measurement_statistics(res) -> pd.Series:
+    """Chargements et poids externes (construits d'ordre 1), pour le bootstrap.
+
+    Clés : ("outer_loading", "LV -> indicateur") et ("outer_weight", "indicateur -> LV")."""
+    meas = res.measurement_result
+    out = {}
+    for lv in _measured(meas):
+        for ind in meas.model.measurement[lv]:
+            out[("outer_loading", f"{lv} -> {ind}")] = meas.outer_loadings[(lv, ind)]
+            out[("outer_weight", f"{ind} -> {lv}")] = meas.outer_weights[(lv, ind)]
+    return pd.Series(out, dtype=float)
