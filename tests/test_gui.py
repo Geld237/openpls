@@ -433,3 +433,40 @@ def test_bca_difference_and_moderated_mediation():
     at.radio(key="boot_ci").set_value("bca").run()
     assert not at.exception, at.exception
     assert any("Intervalles BCa." in c.value for c in at.caption)
+
+
+def test_exports_report_project_script_and_diagram(tmp_path):
+    import io
+    import zipfile
+
+    from docx import Document
+
+    from openpls.diagram_export import render
+    from openpls.project import load_project
+
+    at = _app(auto_boot=True)
+    at.session_state["n_boot"] = 100
+    at.run()
+    _btn(at, "Estimer").click().run()
+    assert not at.exception, at.exception
+    rep = at.session_state["_report"][1]
+    doc = Document(io.BytesIO(rep))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert "Coefficients de chemin" in text and len(doc.tables) >= 4 and doc.inline_shapes
+    png = at.session_state["_diagram_cache"][1]
+    assert png[:4] == b"\x89PNG"
+    # projet : aller-retour
+    from openpls.project import save_project
+
+    raw = simulate(50, seed=1)
+    blob = save_project(raw, "x.csv", SYNTAX, {"XI1": (10, 20)}, {"algo": "PLS", "n_boot": 300})
+    proj = load_project(blob)
+    assert proj["syntax"] == SYNTAX and proj["settings"]["n_boot"] == 300 and proj["editor_pos"]["XI1"] == (10, 20)
+    assert proj["data"].shape == raw.shape
+    assert zipfile.ZipFile(io.BytesIO(blob)).namelist() == ["project.json", "data.csv"]
+    # script Python : il s'exécute
+    from openpls.diagram_export import python_script
+
+    raw.to_csv(tmp_path / "d.csv", index=False)
+    code = python_script(SYNTAX, str(tmp_path / "d.csv"), {"scheme": "path"}, "listwise", 50, 1)
+    exec(compile(code, "script", "exec"), {"__name__": "__main__"})

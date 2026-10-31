@@ -29,6 +29,9 @@ args = [
     "--add-data", f"{root / 'openpls' / 'static'}{sep}openpls/static",
     "--add-data", f"{root / 'openpls' / 'style.css'}{sep}openpls",
     "--hidden-import", "openpyxl", "--hidden-import", "scipy.special._cdflib",
+    # rapport Word (modèle .docx interne), import SPSS/Stata, figures
+    "--collect-data", "docx", "--collect-all", "pyreadstat", "--hidden-import", "matplotlib.backends.backend_agg",
+    "--hidden-import", "matplotlib.backends.backend_svg",
     # moteur de fenêtre (pywebview)
     "--collect-all", "webview",
 ]

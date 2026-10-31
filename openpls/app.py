@@ -260,11 +260,26 @@ if source == "file":
                       "« Données d'exemple »."))
         st.stop()
     content = up.getvalue()
-    raw = read_file(content, up.name)
     # identifié par son contenu : un fichier corrigé de même nom et même taille réinitialise les résultats
     import hashlib
 
     data_id = f"file:{up.name}:{hashlib.sha256(content).hexdigest()[:16]}"
+    if up.name.lower().endswith(".openpls"):  # projet : données + syntaxe + disposition + réglages
+        from openpls.project import load_project
+
+        try:
+            proj = load_project(content)
+        except Exception as e:  # noqa: BLE001
+            st.error(T("Projet illisible : {e}", e=e))
+            st.stop()
+        raw = proj["data"]
+        if st.session_state.get("data_id") != data_id and st.session_state.get("_proj_applied") != data_id:
+            st.session_state["_proj_applied"] = data_id
+            st.session_state["_carry"] = proj.get("settings", {})  # réglages appliqués avant les widgets
+            st.session_state["_proj_model"] = (data_id, proj["syntax"], proj["editor_pos"])
+            st.rerun()
+    else:
+        raw = read_file(content, up.name)
 elif source == "example_hoc":
     raw = simulate_higher_order(400, seed=21)
     data_id = "example_hoc"
@@ -315,7 +330,11 @@ if st.session_state.get("data_id") != data_id:
     # nouvelle version d'un fichier aux mêmes colonnes (données corrigées) : on garde le modèle saisi,
     # mais tous les résultats sont effacés ; sinon, modèle par défaut
     same_layout = (prev_id or "").startswith("file:") and data_id.startswith("file:") and prev_cols == list(raw.columns)
-    if same_layout and st.session_state.get("syntax_saved"):
+    _pm = st.session_state.get("_proj_model")
+    if _pm and _pm[0] == data_id:  # projet ouvert : son modèle et sa disposition
+        st.session_state["syntax"] = _pm[1]
+        st.session_state["editor_pos"] = _pm[2]
+    elif same_layout and st.session_state.get("syntax_saved"):
         st.session_state["syntax"] = st.session_state["syntax_saved"]
     else:
         st.session_state["syntax"] = {"example": EXAMPLE_SYNTAX, "example_hoc": HOC_SYNTAX}.get(
@@ -332,6 +351,7 @@ _expanded, _notes = expand_controls(st.session_state["syntax"], raw)
 if _expanded != st.session_state["syntax"]:
     st.session_state["syntax"] = _expanded
     st.session_state["control_notes"] = _notes
+raw_original = raw
 raw = add_dummy_columns(raw, st.session_state["syntax"])
 numeric_cols = [c for c in raw.columns if pd.api.types.is_numeric_dtype(raw[c])]
 
@@ -487,6 +507,19 @@ with page_model:
             if res is None:
                 st.caption(T("Clique sur « Estimer le modèle » pour afficher les estimations sur le diagramme."))
 
+# ---------------------------------------------------------------- projet (toujours disponible)
+st.sidebar.subheader(T("Projet"))
+from openpls.project import SETTINGS as _PSET, save_project
+
+_fname = up.name if source == "file" and up is not None else f"{data_id}.csv"
+offer_file("⬇  " + T("Enregistrer le projet (.openpls)"),
+           save_project(raw_original, _fname, st.session_state["syntax"], st.session_state.get("editor_pos"),
+                        {k: st.session_state[k] for k in _PSET if k in st.session_state}),
+           os.path.splitext(os.path.basename(_fname))[0] + ".openpls", key="dl_project",
+           mime="application/zip", container=st.sidebar)
+st.sidebar.caption(T("Données, modèle, disposition et réglages dans un seul fichier, à rouvrir avec « Importer "
+                     "un fichier »."))
+
 with page_prelim:
     from openpls import page_prelim as _prelim
 
@@ -545,9 +578,27 @@ with page_res:
                                 "le gras des tableaux et les intervalles de confiance."))
                 alpha = st.session_state["alpha"]
         _mode = st.session_state.get("sig_view", "stars")
-        st.graphviz_chart(model_to_dot(model, res, positions=st.session_state.get("editor_pos"), boot=boot, label_mode=_mode,
-                                       alpha=alpha),
-                          width="stretch")
+        diagram_dot = model_to_dot(model, res, positions=st.session_state.get("editor_pos"), boot=boot,
+                                   label_mode=_mode, alpha=alpha)
+        st.graphviz_chart(diagram_dot, width="stretch")
+        from openpls.diagram_export import render as _render_diagram
+
+        _dkey = ("diagram", hash(diagram_dot))
+        if st.session_state.get("_diagram_cache", (None,))[0] != _dkey:
+            try:
+                st.session_state["_diagram_cache"] = (_dkey, _render_diagram(diagram_dot, "png"),
+                                                      _render_diagram(diagram_dot, "svg"))
+            except Exception:  # noqa: BLE001 - export indisponible pour ce diagramme
+                st.session_state["_diagram_cache"] = (_dkey, None, None)
+        _, _png, _svg = st.session_state["_diagram_cache"]
+        if _png:
+            dc = st.columns([1, 1, 1, 3])
+            with dc[0]:
+                offer_file("⬇  PNG", _png, T("diagramme.png"), key="dl_diag_png", mime="image/png")
+            with dc[1]:
+                offer_file("⬇  SVG", _svg, T("diagramme.svg"), key="dl_diag_svg", mime="image/svg+xml")
+            with dc[2]:
+                offer_file("⬇  DOT", diagram_dot, T("diagramme.dot"), key="dl_diag_dot")
         if boot is not None and _mode == "colors":
             st.caption(T("Seuil de {a} % (bootstrap, {n} tirages). Vert : significatif. Rouge pointillé : non "
                          "significatif. L'épaisseur suit la taille de l'effet.",
@@ -1291,3 +1342,32 @@ offer_file("⬇  " + T("Résultats (Excel)"), to_excel(sheets), T("openpls_resul
            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", container=st.sidebar)
 offer_file("⬇  " + T("Syntaxe du modèle"), st.session_state["syntax"], T("modele.txt"), key="dl_syntax",
            container=st.sidebar)
+from openpls.diagram_export import python_script
+
+_rkey = (base_key, boot is not None and boot.attrs.get("n_boot_ok"), alpha, st.session_state.get("boot_ci"),
+         st.session_state.get("lang"), st.session_state.get("decimal"))
+if st.session_state.get("_report", (None,))[0] != _rkey:
+    from openpls.report import build_report
+
+    _tables = {"paths": paths_tbl, "loadings": loadings_tbl[["chargement", "poids"]], "quality": q,
+               "htmt": htmt_tbl, "r2": sres.r_squared.rename("R²").to_frame()}
+    if isinstance(globals().get("f2"), pd.DataFrame):
+        _tables["f2"] = f2
+    _tables = {k: translate_df(v) for k, v in _tables.items()}
+    _info = {"n": len(data), "algorithm": "PLSc" if fit_kwargs.get("consistent") else "PLS-SEM", "scheme": scheme,
+             "n_boot": boot.attrs.get("n_boot_ok") if boot is not None else None,
+             "ci_method": boot.attrs.get("ci_method", "percentile") if boot is not None else None,
+             "alpha": alpha, "missing": missing}
+    try:
+        _png = st.session_state.get("_diagram_cache", (None, None))[1]
+        st.session_state["_report"] = (_rkey, build_report(_info, _tables, _png))
+    except Exception as _e:  # noqa: BLE001
+        st.session_state["_report"] = (_rkey, None)
+if st.session_state["_report"][1]:
+    offer_file("⬇  " + T("Rapport (Word)"), st.session_state["_report"][1], T("rapport_openpls.docx"), key="dl_docx",
+               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", container=st.sidebar)
+
+offer_file("⬇  " + T("Script Python (reproductible)"),
+           python_script(st.session_state["syntax"], up.name if source == "file" and up is not None else "donnees.csv",
+                         fit_kwargs, missing, int(n_boot), seed),
+           T("analyse_openpls.py"), key="dl_py", container=st.sidebar)
