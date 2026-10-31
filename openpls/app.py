@@ -4,6 +4,7 @@ Lancement :  openpls-gui      ou      streamlit run openpls/app.py
 """
 from __future__ import annotations
 
+import html
 import os
 import sys
 import time
@@ -23,7 +24,10 @@ from openpls.higher_order import higher_order_measurement, higher_order_statisti
 from openpls.moderation import simple_slopes, simple_slope_statistics
 from openpls.simulate import simulate, simulate_higher_order
 
-st.set_page_config(page_title="OpenPLS", page_icon="◎", layout="wide")
+_HERE = Path(__file__).resolve().parent
+st.set_page_config(page_title="OpenPLS", page_icon=str(_HERE / "static" / "icon.png"), layout="wide")
+st.html(f"<style>{(_HERE / 'style.css').read_text(encoding='utf-8')}</style>")
+st.logo(str(_HERE / "static" / "logo.svg"), size="large", icon_image=str(_HERE / "static" / "mark.svg"))
 
 EXAMPLE_SYNTAX = """# Modèle de mesure  ( =~ réflectif,  <~ formatif )
 XI1  =~ xi1_1 + xi1_2 + xi1_3
@@ -172,20 +176,22 @@ def run_button(label: str, key: str) -> bool:
 
 
 # ---------------------------------------------------------------- barre latérale
-st.sidebar.title("◎ OpenPLS")
-st.sidebar.caption("PLS-SEM libre et open source")
-if DESKTOP and st.sidebar.button("Quitter OpenPLS", key="quit_app"):
+if DESKTOP and st.sidebar.button("Quitter OpenPLS", key="quit_app", type="tertiary"):
     st.sidebar.info("OpenPLS se ferme…")
     os._exit(0)  # arrête le serveur ; la fenêtre de l'application se ferme d'elle-même
 
-st.sidebar.header("1. Données")
+st.sidebar.subheader("Données")
 source = st.sidebar.radio("Source", ["Données d'exemple", "Exemple de second ordre", "Importer un fichier"],
-                          key="source")
+                          key="source", label_visibility="collapsed")
 if source == "Importer un fichier":
     up = st.sidebar.file_uploader("CSV ou Excel", type=["csv", "txt", "xlsx", "xls"])
     if up is None:
-        st.info("Importe un fichier CSV ou Excel (une colonne par indicateur, une ligne par répondant) "
-                "dans la barre latérale, ou choisis les données d'exemple.")
+        st.html('<div style="height:1.5rem"></div>')
+        st.subheader("Importe tes données pour commencer")
+        st.markdown("Dépose un fichier **CSV ou Excel** dans la barre latérale : une colonne par indicateur, "
+                    "une ligne par répondant. OpenPLS propose ensuite un modèle de départ que tu ajustes "
+                    "dans l'éditeur visuel.\n\nPour découvrir l'outil sans tes données, choisis "
+                    "« Données d'exemple ».")
         st.stop()
     content = up.getvalue()
     raw = read_file(content, up.name)
@@ -200,27 +206,29 @@ else:
     raw = example_data()
     data_id = "example"
 
-st.sidebar.header("2. Paramètres")
+st.sidebar.subheader("Estimation")
 algo = st.sidebar.selectbox("Algorithme", ["PLS", "PLSc (consistent)"], key="algo",
                             help="PLSc corrige l'atténuation pour les construits réflectifs (modèles de facteurs communs).")
-scheme = st.sidebar.selectbox("Schéma de pondération interne", ["path", "factorial", "centroid"], key="scheme")
-moderation = st.sidebar.selectbox(
-    "Méthode de modération", ["two_stage", "product_indicator", "orthogonal"], key="moderation",
-    format_func={"two_stage": "Deux étapes (recommandé)", "product_indicator": "Produit des indicateurs",
-                 "orthogonal": "Orthogonalisation"}.get,
-    help="Utilisée seulement si le modèle contient un terme d'interaction `X:M`.")
-hoc_method = st.sidebar.selectbox(
-    "Approche d'ordre supérieur", ["two_stage_disjoint", "two_stage_embedded", "repeated_indicators"],
-    key="hoc_method",
-    format_func={"two_stage_disjoint": "Deux étapes, disjointe (recommandé)",
-                 "two_stage_embedded": "Deux étapes, intégrée", "repeated_indicators": "Indicateurs répétés"}.get,
-    help="Utilisée seulement si le modèle contient un construit d'ordre supérieur (`HOC =~ LV1 + LV2`).")
-n_boot = st.sidebar.number_input("Échantillons bootstrap", 100, 20000, 1000, step=500, key="n_boot")
 auto_boot = st.sidebar.checkbox("Calculer t et p automatiquement", value=True, key="auto_boot",
                                 help="Lance le bootstrap juste après l'estimation : t, p, intervalles de confiance "
                                      "et étoiles de significativité apparaissent dans les tableaux et le diagramme.")
-alpha = st.sidebar.selectbox("Seuil de significativité", [0.05, 0.01, 0.10], key="alpha")
-seed = int(st.sidebar.number_input("Graine aléatoire", 0, 10**6, 42, key="seed"))
+n_boot = st.sidebar.number_input("Échantillons bootstrap", 100, 20000, 1000, step=500, key="n_boot")
+alpha = st.sidebar.selectbox("Seuil de significativité", [0.05, 0.01, 0.10], key="alpha",
+                             format_func=lambda a: f"{a:.0%}".replace(".", ","))
+with st.sidebar.expander("Options avancées"):
+    scheme = st.selectbox("Schéma de pondération interne", ["path", "factorial", "centroid"], key="scheme")
+    moderation = st.selectbox(
+        "Méthode de modération", ["two_stage", "product_indicator", "orthogonal"], key="moderation",
+        format_func={"two_stage": "Deux étapes (recommandé)", "product_indicator": "Produit des indicateurs",
+                     "orthogonal": "Orthogonalisation"}.get,
+        help="Utilisée seulement si le modèle contient un terme d'interaction `X:M`.")
+    hoc_method = st.selectbox(
+        "Approche d'ordre supérieur", ["two_stage_disjoint", "two_stage_embedded", "repeated_indicators"],
+        key="hoc_method",
+        format_func={"two_stage_disjoint": "Deux étapes, disjointe (recommandé)",
+                     "two_stage_embedded": "Deux étapes, intégrée", "repeated_indicators": "Indicateurs répétés"}.get,
+        help="Utilisée seulement si le modèle contient un construit d'ordre supérieur (`HOC =~ LV1 + LV2`).")
+    seed = int(st.number_input("Graine aléatoire", 0, 10**6, 42, key="seed"))
 
 # ---------------------------------------------------------------- définition du modèle
 raw = raw.rename(columns=str)  # en-têtes numériques (fréquents dans Excel) -> texte, comme dans la syntaxe
@@ -379,10 +387,23 @@ with page_res:
     if res.moderation in ("product_indicator", "orthogonal") and fit_kwargs.get("consistent"):
         st.warning("Avec PLSc, seule la modération en deux étapes est corrigée de l'atténuation (Becker et al. 2018) ; "
                    "les approches par produit d'indicateurs sous-estiment l'effet d'interaction.")
-    mod_txt = (f" · modération : {res.moderation}" if res.moderation else "") + (
-        f" · ordre supérieur : {res.hoc_method}" if res.hoc_method else "")
-    st.caption(f"{'PLSc' if res.consistent else 'PLS'} · schéma {scheme} · {status} en {conv_res.iterations} itérations · "
-               f"n = {len(data)}{mod_txt}")
+    _sv = structural_view(res)
+    _r2 = "".join(f"<span>{html.escape(str(k))} {v:.3f}</span>" for k, v in _sv.r_squared.items())
+    _items = [
+        ("Méthode", ("PLSc" if res.consistent else "PLS") + f" <span>schéma {scheme}</span>"),
+        ("Observations", f"{len(data)}"),
+        ("Convergence", f"{conv_res.iterations} itérations" if status == "convergé" else "non atteinte"),
+        ("Bootstrap", f"{boot.attrs.get('n_boot_ok', len(boot))} tirages" if boot is not None else "pas encore lancé"),
+        ("R²", _r2 or "—"),
+    ]
+    if res.moderation:
+        _items.append(("Modération", {"two_stage": "deux étapes", "product_indicator": "produit des indicateurs",
+                                      "orthogonal": "orthogonalisation"}.get(res.moderation, res.moderation)))
+    if res.hoc_method:
+        _items.append(("Ordre supérieur", res.hoc_method.replace("_", " ")))
+    st.html('<dl class="opls-summary">' + "".join(
+        f'<div><dt>{k}</dt><dd{" class=warn" if k == "Convergence" and status != "convergé" else ""}>{v}</dd></div>'
+        for k, v in _items) + "</dl>")
     if status != "convergé":
         st.error("L'algorithme n'a pas convergé : vérifie la spécification du modèle.")
     with st.expander("Diagramme estimé", expanded=True):
@@ -997,7 +1018,7 @@ if hoc_eval is not None:
     sheets["Ordre superieur"] = hoc_eval["components"]
     sheets["Ordre sup qualite"] = hoc_eval["quality"]
 sheets.update(excel_extra)
-st.sidebar.header("3. Export")
+st.sidebar.subheader("Exporter")
 offer_file("⬇  Résultats (Excel)", to_excel(sheets), "openpls_resultats.xlsx", key="dl_xlsx",
            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", container=st.sidebar)
 offer_file("⬇  Syntaxe du modèle", st.session_state["syntax"], "modele.txt", key="dl_syntax", container=st.sidebar)

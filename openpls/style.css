@@ -1,0 +1,148 @@
+/* OpenPLS : habillage de l'interface Streamlit.
+   Jetons : encre #1C2B3A, chemin #2E5E9E, papier #F5F7FA, filet #D8DEE8, teinte latente #E6EDF7.
+   Un seul élément affirmé : la barre d'application (logo + onglets principaux), fixée en haut. */
+
+:root {
+  --ink: #1C2B3A;
+  --ink-2: #4A5A6C;
+  --ink-3: #6B7889;
+  --path: #2E5E9E;
+  --path-tint: #E6EDF7;
+  --paper: #F5F7FA;
+  --rule: #D8DEE8;
+  --bar-h: 56px;
+}
+
+/* ---------- en-tête Streamlit : transparent, il ne garde que ses boutons ---------- */
+header[data-testid="stHeader"] {
+  background: transparent;
+  pointer-events: none;
+}
+header[data-testid="stHeader"] * { pointer-events: auto; }
+[data-testid="stDecoration"] { display: none; }
+
+[data-testid="stMainBlockContainer"] {
+  padding-top: 0;
+  padding-bottom: 4rem;
+}
+
+/* ---------- barre d'application : logo + onglets principaux ---------- */
+.st-key-page > div > [role="tablist"] {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: var(--bar-h);
+  margin: 0 -5rem 1.5rem;
+  padding: 0 5rem;
+  gap: 0.25rem;
+  align-items: stretch;
+  background: #FFFFFF;
+  border-bottom: 1px solid var(--rule);
+  overflow: visible;
+}
+
+/* logo : en haut à gauche, dans l'en-tête de la barre latérale, sur la même ligne que les onglets */
+[data-testid="stSidebarHeader"] {
+  box-sizing: border-box;
+  height: var(--bar-h);
+  margin: 0 -1.25rem 0.75rem;
+  padding: 0 0.75rem 0 1.25rem;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--rule);
+}
+[data-testid="stSidebarHeader"] img[data-testid="stSidebarLogo"],
+[data-testid="stSidebarHeader"] img { height: 30px; max-width: none; width: auto; }
+/* barre latérale repliée : le symbole seul, à gauche, au-dessus de la barre d'onglets */
+header[data-testid="stHeader"] img[data-testid="stHeaderLogo"] { height: 26px; width: auto; }
+body:has([data-testid="stExpandSidebarButton"]) .st-key-page > div > [role="tablist"] { padding-left: 140px; }
+
+.st-key-page > div > [role="tablist"] > [role="tab"] {
+  height: 100%;
+  padding: 0 0.85rem;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 -3px 0 transparent;
+  transition: box-shadow 120ms ease, color 120ms ease;
+}
+.st-key-page > div > [role="tablist"] > [role="tab"] p {
+  font-size: 0.98rem;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.st-key-page > div > [role="tablist"] > [role="tab"]:hover p { color: var(--ink); }
+.st-key-page > div > [role="tablist"] > [role="tab"][aria-selected="true"] {
+  box-shadow: inset 0 -3px 0 var(--path);
+}
+.st-key-page > div > [role="tablist"] > [role="tab"][aria-selected="true"] p { color: var(--ink); font-weight: 600; }
+.st-key-page > div > [role="tablist"] > [role="tab"]:focus-visible {
+  outline: 2px solid var(--path);
+  outline-offset: -4px;
+}
+
+/* ---------- sous-onglets : contrôle segmenté, discret ---------- */
+.stTabs .stTabs [role="tablist"] {
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  background: #E9EDF3;
+  border-radius: 8px;
+}
+.stTabs .stTabs [role="tablist"] > [role="tab"] {
+  height: 32px;
+  padding: 0 0.9rem;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+}
+.stTabs .stTabs [role="tablist"] > [role="tab"] p { font-size: 0.88rem; font-weight: 500; color: var(--ink-2); }
+.stTabs .stTabs [role="tablist"] > [role="tab"][aria-selected="true"] {
+  background: #FFFFFF;
+  box-shadow: 0 1px 2px rgba(28, 43, 58, 0.12);
+}
+.stTabs .stTabs [role="tablist"] > [role="tab"][aria-selected="true"] p { color: var(--ink); }
+.stTabs .stTabs [role="tablist"] > [role="tab"]:focus-visible { outline: 2px solid var(--path); outline-offset: 1px; }
+
+/* ---------- bandeau de synthèse des résultats ---------- */
+.stHtml dl.opls-summary, dl.opls-summary {
+  display: flex;
+  padding: 0;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0 0 1rem;
+  background: #FFFFFF;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+dl.opls-summary > div {
+  margin: 0;
+  padding: 0.6rem 1.1rem;
+  border-right: 1px solid var(--rule);
+  min-width: 0;
+}
+.opls-summary > div:last-child { border-right: 0; }
+.opls-summary dt { font-size: 0.78rem; color: var(--ink-3); margin: 0 0 0.1rem; }
+.opls-summary dd { margin: 0; font-size: 1rem; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.opls-summary dd.warn { color: #B83A2E; }
+.opls-summary dd span { font-weight: 400; color: var(--ink-2); }
+.opls-summary dd span + span { margin-left: 0.8rem; }
+
+/* ---------- barre latérale ---------- */
+[data-testid="stSidebar"] { border-right: 1px solid var(--rule); }
+[data-testid="stSidebarUserContent"] { padding-top: 0; }
+[data-testid="stSidebar"] h3 { margin-top: 0.4rem; }
+
+/* tableaux : chiffres alignés */
+[data-testid="stDataFrame"], [data-testid="stTable"] { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 760px) {
+  .st-key-page > div > [role="tablist"] { margin: 0 -1rem 1rem; padding: 0 1rem; overflow-x: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
+
+/* soulignement animé natif : remplacé par l'ombre intérieure (barre) et la pastille (sous-onglets) */
+.stTabs [role="tablist"] > div:not([role="tab"]) { display: none; }

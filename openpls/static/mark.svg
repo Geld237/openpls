@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 44" role="img" aria-label="OpenPLS">
+  <!-- une variable latente qui en explique une autre : le motif de base d'un modèle PLS -->
+  <ellipse cx="20" cy="22" rx="17" ry="12" fill="#2E5E9E"/>
+  <path d="M40 22 H55" stroke="#2E5E9E" stroke-width="4" stroke-linecap="round"/>
+  <path d="M53 15 L62 22 L53 29 Z" fill="#2E5E9E"/>
+  <ellipse cx="78" cy="22" rx="15" ry="11" fill="#E6EDF7" stroke="#2E5E9E" stroke-width="4"/>
+</svg>

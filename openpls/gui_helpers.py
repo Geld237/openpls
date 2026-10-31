@@ -32,7 +32,7 @@ def _q(s: str) -> str:
     return '"' + str(s).replace('"', r"\"") + '"'
 
 
-SIG_POS, SIG_NEG, NONSIG = "#2E5E9E", "#C0392B", "#9a9893"
+SIG_POS, SIG_NEG, NONSIG = "#2E5E9E", "#B83A2E", "#98A2B3"
 
 
 def stars(p: float) -> str:
@@ -64,7 +64,7 @@ def _edge_style(value: float, key, boot) -> str:
         return f'color="{SIG_POS}", fontcolor="{SIG_POS}"'
     p = boot.loc[key, "p_value"]
     if not (np.isfinite(p) and p < 0.05):
-        return f'color="{NONSIG}", fontcolor="#6b6a66", style=dashed'
+        return f'color="{NONSIG}", fontcolor="#6B7889", style=dashed'
     c = SIG_POS if value >= 0 else SIG_NEG
     return f'color="{c}", fontcolor="{c}"'
 
@@ -78,9 +78,9 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
     bleu = positif significatif, rouge = négatif significatif, gris pointillé = non significatif (5 %)."""
     lines = [
         "digraph G {",
-        '  rankdir=LR; splines=true; nodesep=0.25; ranksep=0.9;',
-        '  node [fontname="Helvetica", fontsize=11];',
-        '  edge [fontname="Helvetica", fontsize=9, color="#555555"];',
+        '  rankdir=LR; splines=true; nodesep=0.25; ranksep=0.9; bgcolor="transparent";',
+        '  node [fontname="IBM Plex Sans", fontsize=11, fontcolor="#1C2B3A"];',
+        '  edge [fontname="IBM Plex Sans", fontsize=9, color="#5B6878", fontcolor="#1C2B3A"];',
     ]
     if res is not None:
         from .higher_order import structural_view
@@ -99,13 +99,13 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         extra = ", peripheries=2" if lv in getattr(model, "higher_order", {}) else ""
         lines.append(
             f'  {_q("lv:" + lv)} [label={_q(label)}, shape=ellipse, style=filled, '
-            f'fillcolor="#DCE8F7", color="#2E5E9E", penwidth=1.5{extra}];'
+            f'fillcolor="#E6EDF7", color="#2E5E9E", penwidth=1.5{extra}];'
         )
     if show_indicators:
         for lv in model.latents:
             for ind in model.measurement.get(lv, []):
                 lines.append(f'  {_q("mv:" + ind)} [label={_q(ind)}, shape=box, style=filled, '
-                             f'fillcolor="#FFF6D6", color="#B8962E", fontsize=9, height=0.3];')
+                             f'fillcolor="#FBF3E1", color="#B8862B", fontsize=9, height=0.3];')
                 lab = ""
                 if res is not None:
                     if model.modes[lv] == "A":
@@ -129,7 +129,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
                     val, key = hoc_tbl.loc[(hoc, loc), "poids"], ("hoc_weight", f"{loc} -> {hoc}")
                 lab = f", label={_q(_edge_label(val, key, boot, label_mode))}"
             a, b = (hoc, loc) if model.modes[hoc] == "A" else (loc, hoc)
-            lines.append(f'  {_q("lv:" + a)} -> {_q("lv:" + b)} [color="#6b7280", fontcolor="#52514e", '
+            lines.append(f'  {_q("lv:" + a)} -> {_q("lv:" + b)} [color="#6B7889", fontcolor="#4A5A6C", '
                          f'style=dashed, arrowsize=0.7{lab}];')
     for s, d in model.structural:
         attrs = f'color="{SIG_POS}", fontcolor="{SIG_POS}"'
@@ -141,15 +141,15 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         lines.append(f'  {_q("lv:" + s)} -> {_q("lv:" + d)} [{attrs}];')
     for a, b, d in getattr(model, "interactions", []):
         name = f"{a}:{b}"
-        attrs = 'color="#B8962E", fontcolor="#8a6d1f", style=dashed'
+        attrs = 'color="#B8862B", fontcolor="#8a6d1f", style=dashed'
         if res is not None and name in res.path_coefficients.index:
             v = res.path_coefficients.loc[name, d]
             key = ("direct", f"{name} -> {d}")
             attrs = _edge_style(v, key, boot) + f", label={_q(_edge_label(v, key, boot, label_mode))}"
             if boot is None or key not in boot.index:
-                attrs = 'color="#B8962E", fontcolor="#8a6d1f", style=dashed' + f", label={_q(f'{v:.3f}')}"
+                attrs = 'color="#B8862B", fontcolor="#8a6d1f", style=dashed' + f", label={_q(f'{v:.3f}')}"
         lines.append(f'  {_q("ix:" + name)} [label={_q(a + " × " + b)}, shape=diamond, style=filled, '
-                     f'fillcolor="#FFF6D6", color="#B8962E", fontsize=9];')
+                     f'fillcolor="#FBF3E1", color="#B8862B", fontsize=9];')
         lines.append(f'  {_q("ix:" + name)} -> {_q("lv:" + d)} [{attrs}];')
     lines.append("}")
     return "\n".join(lines)

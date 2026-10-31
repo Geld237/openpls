@@ -1,0 +1,59 @@
+# Thème et configuration d'OpenPLS (lus par openpls-gui et par l'application de bureau,
+# qui démarrent Streamlit depuis ce dossier).
+
+[server]
+address = "localhost"
+enableStaticServing = true      # police et logo servis localement : aucun accès Internet
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#2E5E9E"            # bleu des variables latentes du diagramme
+backgroundColor = "#F5F7FA"          # papier froid
+secondaryBackgroundColor = "#EAEFF6"
+textColor = "#1C2B3A"                # encre
+linkColor = "#2E5E9E"
+borderColor = "#D8DEE8"
+dataframeBorderColor = "#E3E8F0"
+showWidgetBorder = true
+baseRadius = "6px"
+baseFontSize = 15
+font = "IBM Plex Sans, system-ui, sans-serif"
+headingFont = "IBM Plex Sans, system-ui, sans-serif"
+headingFontSizes = ["1.6rem", "1.3rem", "1.08rem", "1rem", "0.95rem", "0.9rem"]
+headingFontWeights = [600, 600, 600, 600, 600, 600]
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/ibm-plex-sans-latin-400-normal.woff2"
+weight = "400"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/ibm-plex-sans-latin-500-normal.woff2"
+weight = "500"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/ibm-plex-sans-latin-600-normal.woff2"
+weight = "600"
+style = "normal"
+
+[[theme.fontFaces]]
+family = "IBM Plex Sans"
+url = "app/static/fonts/ibm-plex-sans-latin-700-normal.woff2"
+weight = "700"
+style = "normal"
+
+[theme.sidebar]
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F7FA"
+borderColor = "#E3E8F0"
+headingFontSizes = ["1.05rem", "0.95rem", "0.9rem", "0.9rem", "0.85rem", "0.85rem"]

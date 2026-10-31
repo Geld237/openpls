@@ -104,11 +104,12 @@ def serve(port: int) -> None:
                 time.sleep(1)
             os._exit(0)
         threading.Thread(target=watch, daemon=True).start()
+    os.chdir(_app_path().parent)  # thème : ./.streamlit/config.toml ; police et logo : ./static
     sys.argv = ["streamlit", "run", str(_app_path()),
                 "--global.developmentMode=false", "--server.headless=true",
                 "--server.address=localhost", f"--server.port={port}",
-                "--browser.gatherUsageStats=false", "--client.toolbarMode=minimal",
-                "--theme.primaryColor=#2E5E9E"]
+                "--server.enableStaticServing=true",
+                "--browser.gatherUsageStats=false", "--client.toolbarMode=minimal"]
     sys.exit(cli.main())
 
 
@@ -158,7 +159,12 @@ def _run_window(url: str, server: subprocess.Popen, selftest: bool) -> bool:
         window.destroy()
 
     try:
-        webview.start(background, private_mode=False)
+        import inspect
+
+        extra = {}  # icône de fenêtre (GTK/Qt ; Windows et macOS prennent celle de l'exécutable)
+        if "icon" in inspect.signature(webview.start).parameters:
+            extra["icon"] = str(_app_path().parent / "static" / "icon.png")
+        webview.start(background, private_mode=False, **extra)
     except Exception as e:  # noqa: BLE001 - aucun moteur (Linux sans Qt/GTK, Windows sans WebView2…)
         print(f"Fenêtre impossible : {e}", flush=True)
         return False

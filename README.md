@@ -4,7 +4,7 @@ Implémentation **libre et open source** du PLS-SEM (*Partial Least Squares Stru
 
 Le code est une **réimplémentation indépendante, écrite à partir de la littérature scientifique publiée**. Il ne contient aucun code, fichier ni ressource d'un logiciel propriétaire.
 
-## Fonctionnalités (v0.6)
+## Fonctionnalités (v0.7)
 
 | | |
 |---|---|
@@ -80,6 +80,10 @@ Le navigateur s'ouvre sur `http://localhost:8501`. Ensuite :
 3. **Estimer le modèle** : OpenPLS calcule aussi t et p (bootstrap) et bascule sur l'onglet **Résultats** — diagramme avec étoiles, tableaux des chemins, du modèle de mesure, de validité discriminante et des scores.
 4. L'onglet **Significativité** détaille le bootstrap et l'analyse de médiation ; l'onglet **Analyses avancées** regroupe PLSpredict/CVPAT, MGA/MICOM, IPMA, NCA, endogénéité, CB-SEM/CFA et FIMIX-PLS.
 5. Exporte tous les résultats en Excel depuis la barre latérale.
+
+La barre du haut (logo et onglets Modèle, Résultats, Significativité, Analyses avancées) reste visible quand tu fais défiler la page. Après l'estimation, un bandeau résume la méthode, la taille de l'échantillon, la convergence, le bootstrap et les R².
+
+![Résultats : bandeau de synthèse et diagramme annoté](docs/resultats.png)
 
 ![Analyse multigroupe et MICOM](docs/mga.png)
 

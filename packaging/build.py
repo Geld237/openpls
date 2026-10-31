@@ -24,6 +24,10 @@ args = [
     "--collect-all", "openpls",
     # le script de l'interface doit exister comme fichier : Streamlit l'exécute
     "--add-data", f"{root / 'openpls' / 'app.py'}{sep}openpls",
+    # thème, police et logo (dossiers cachés et données non Python : ajoutés explicitement)
+    "--add-data", f"{root / 'openpls' / '.streamlit' / 'config.toml'}{sep}openpls/.streamlit",
+    "--add-data", f"{root / 'openpls' / 'static'}{sep}openpls/static",
+    "--add-data", f"{root / 'openpls' / 'style.css'}{sep}openpls",
     "--hidden-import", "openpyxl", "--hidden-import", "scipy.special._cdflib",
     # moteur de fenêtre (pywebview)
     "--collect-all", "webview",
