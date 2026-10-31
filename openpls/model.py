@@ -74,8 +74,7 @@ class Model:
             for lv in (a, b, dst):
                 if lv not in idx:
                     raise ValueError(f"Interaction {a}:{b} -> {dst} : variable latente inconnue {lv}")
-            if a == b:
-                raise ValueError(f"Interaction {a}:{b} : il faut deux variables différentes")
+            # a == b : effet quadratique (X:X), estimé comme une interaction de X avec lui-même
             missing = [lv for lv in (a, b) if (lv, dst) not in self.structural]
             if missing:
                 raise ValueError(f"Interaction {a}:{b} -> {dst} : ajoute aussi les effets simples "

@@ -20,8 +20,8 @@ from openpls.effects import classify_mediation, effect_statistics, total_effects
 from openpls.editor import model_editor
 from openpls.assessment import measurement_statistics
 from openpls.bootstrap import with_confidence_level
-from openpls.gui_helpers import (fmt_p, guess_syntax, model_to_dot, num, prepare_data, set_decimal, stars,
-                                 stars_legend, to_excel)
+from openpls.gui_helpers import (add_dummy_columns, expand_controls, fmt_p, guess_syntax, model_to_dot, num,
+                                 prepare_data, set_decimal, stars, stars_legend, to_excel)
 from openpls.settings import decimal_separator, default_decimal, load_prefs, save_pref, separator_for
 from openpls.i18n import T, tr, set_language, ui_language
 from openpls.higher_order import higher_order_measurement, higher_order_statistics, structural_view
@@ -139,6 +139,20 @@ def read_file(content: bytes, name: str) -> pd.DataFrame:
 
     if name.lower().endswith((".xlsx", ".xls")):
         return pd.read_excel(io.BytesIO(content))
+    if name.lower().endswith((".sav", ".zsav", ".dta")):  # SPSS, Stata : valeurs numériques, libellés à part
+        import tempfile
+
+        import pyreadstat
+
+        with tempfile.NamedTemporaryFile(suffix=os.path.splitext(name)[1], delete=False) as tmp:
+            tmp.write(content)
+        try:
+            reader = pyreadstat.read_dta if name.lower().endswith(".dta") else pyreadstat.read_sav
+            df, meta = reader(tmp.name)
+        finally:
+            os.unlink(tmp.name)
+        df.attrs["labels"] = {k: v for k, v in zip(meta.column_names, meta.column_labels) if v}
+        return df
     # séparateur détecté automatiquement (virgule, point-virgule, tabulation…)
     df = pd.read_csv(io.BytesIO(content), sep=None, engine="python")
     if df.select_dtypes("number").shape[1] == 0:  # CSV français avec virgule décimale
@@ -235,7 +249,8 @@ source = st.sidebar.radio("Source", ["example", "example_hoc", "file"], key="sou
                           format_func={"example": T("Données d'exemple"), "example_hoc": T("Exemple de second ordre"),
                                        "file": T("Importer un fichier")}.get)
 if source == "file":
-    up = st.sidebar.file_uploader(T("CSV ou Excel"), type=["csv", "txt", "xlsx", "xls"])
+    up = st.sidebar.file_uploader(T("CSV, Excel, SPSS, Stata ou projet OpenPLS"),
+                                  type=["csv", "txt", "xlsx", "xls", "sav", "zsav", "dta", "openpls"])
     if up is None:
         st.html('<div style="height:1.5rem"></div>')
         st.subheader(T("Importe tes données pour commencer"))
@@ -263,6 +278,13 @@ algo = st.sidebar.selectbox(T("Algorithme"), ["PLS", "PLSc (consistent)"], key="
 auto_boot = st.sidebar.checkbox(T("Calculer t et p automatiquement"), value=True, key="auto_boot",
                                 help=T("Lance le bootstrap juste après l'estimation : t, p, intervalles de confiance "
                                        "et étoiles de significativité apparaissent dans les tableaux et le diagramme."))
+missing = st.sidebar.selectbox(T("Valeurs manquantes"), ["listwise", "mean", "regression"], key="missing",
+                               format_func={"listwise": T("Suppression par liste"),
+                                            "mean": T("Remplacement par la moyenne"),
+                                            "regression": T("Imputation par régression")}.get,
+                               help=T("Suppression par liste : lignes incomplètes retirées (recommandé si peu de "
+                                      "manquants). Moyenne : simple mais réduit la variance. Régression : chaque "
+                                      "indicateur est prédit par les autres (imputation itérative)."))
 n_boot = st.sidebar.number_input(T("Échantillons bootstrap"), 100, 20000, int(load_prefs().get("n_boot", 1000)),
                                  step=500, key="n_boot")
 # seuil choisi au-dessus du diagramme des résultats ; gardé hors widget pour survivre aux changements de page
@@ -305,6 +327,14 @@ if st.session_state.get("data_id") != data_id:
 elif "syntax" not in st.session_state:  # état du widget perdu (passage sans zone de texte)
     st.session_state["syntax"] = st.session_state.get("syntax_saved", EXAMPLE_SYNTAX)
 
+# variables de contrôle : `Y ~ X + age` -> construit AGE à un indicateur ; colonne texte -> indicatrices
+_expanded, _notes = expand_controls(st.session_state["syntax"], raw)
+if _expanded != st.session_state["syntax"]:
+    st.session_state["syntax"] = _expanded
+    st.session_state["control_notes"] = _notes
+raw = add_dummy_columns(raw, st.session_state["syntax"])
+numeric_cols = [c for c in raw.columns if pd.api.types.is_numeric_dtype(raw[c])]
+
 # ---------------------------------------------------------------- navigation
 PAGES = [T("Modèle"), T("Analyses préliminaires"), T("Résultats"), T("Significativité"), T("Analyses avancées"),
          T("Aide")]
@@ -317,7 +347,8 @@ page_model, page_prelim, page_res, page_sig, page_adv, page_help = st.tabs(PAGES
 with page_model:
     with st.expander(T("Aperçu des données — {r} lignes × {c} colonnes", r=raw.shape[0], c=raw.shape[1])):
         st.dataframe(raw.head(50), width="stretch")
-        st.caption(T("Colonnes : ") + ", ".join(map(str, raw.columns)))
+        labels = raw.attrs.get("labels") or {}
+        st.caption(T("Colonnes : ") + ", ".join(f"{c} ({labels[c]})" if c in labels else str(c) for c in raw.columns))
 
     tab_editor, tab_syntax = st.tabs([T("Éditeur visuel"), T("Syntaxe")])
     with tab_editor:
@@ -346,7 +377,7 @@ with page_model:
     st.session_state["syntax_saved"] = st.session_state["syntax"]  # copie hors widget (survit aux passages sans lui)
     try:
         model = Model.from_syntax(st.session_state["syntax"])
-        data, warns = prepare_data(raw, model)
+        data, warns = prepare_data(raw, model, missing=missing)
         if not model.structural:
             warns.append(T("Aucun chemin structurel : ajoute au moins une ligne `CIBLE ~ SOURCE`."))
         ok = bool(model.structural)
@@ -354,12 +385,15 @@ with page_model:
     except (ValueError, KeyError) as e:
         model, data, warns, ok, model_error = None, None, [], False, str(e).strip("'\"")
 
+    data_key = f"{data_id}|{missing}"  # mêmes données, autre traitement des manquants : autres résultats
     fit_kwargs = dict(scheme=scheme, consistent=algo.startswith("PLSc"))
     if model is not None and model.interactions:
         fit_kwargs["moderation"] = moderation
     if model is not None and model.higher_order:
         fit_kwargs["hoc_method"] = hoc_method
 
+    for _n in st.session_state.pop("control_notes", []):
+        st.info(_n)
     if model_error:
         st.error(model_error)
     for w in warns:
@@ -370,13 +404,13 @@ with page_model:
     if run and ok:
         try:
             res = fit(data, model, **fit_kwargs)
-            st.session_state["results"] = (st.session_state["syntax"], fit_kwargs, res, data, data_id)
+            st.session_state["results"] = (st.session_state["syntax"], fit_kwargs, res, data, data_key)
             st.session_state.pop("boot", None)
         except Exception as e:  # noqa: BLE001 - message lisible pour l'utilisateur
             st.error(T("Échec de l'estimation : {e}", e=e))
 
     prev = st.session_state.get("results")
-    if prev and prev[0] == st.session_state["syntax"] and prev[1] == fit_kwargs and prev[4] == data_id:
+    if prev and prev[0] == st.session_state["syntax"] and prev[1] == fit_kwargs and prev[4] == data_key:
         _, _, res, data, _ = prev
 
     # ---------------------------------------------------------------- bootstrap (t, p, IC)
@@ -395,7 +429,7 @@ with page_model:
 
     def current_boot():
         b = st.session_state.get("boot")
-        if not (b and b[:4] == boot_key() and b[6] == data_id):
+        if not (b and b[:4] == boot_key() and b[6] == data_key):
             return None
         return with_confidence_level(b[4], b[5], alpha)
 
@@ -414,7 +448,7 @@ with page_model:
                     **fit_kwargs,
                 )
             draws = bt.attrs.pop("draws")
-            st.session_state["boot"] = boot_key() + (bt, draws, data_id)
+            st.session_state["boot"] = boot_key() + (bt, draws, data_key)
         except Exception as e:  # noqa: BLE001
             st.error(T("Échec du bootstrap : {e}", e=e))
         bar.empty()
@@ -592,6 +626,17 @@ with tabs[0]:
                 st.markdown(f"**{a} × {b} → {d}** (interaction = {res.path_coefficients.loc[f'{a}:{b}', d]:.3f})")
                 st.dataframe(fmt(ss), width="stretch")
                 st.caption(T("Pente de {a} sur {d} quand {b} vaut -1, 0 ou +1 écart-type.", a=a, b=b, d=d))
+            if a == b:  # effet quadratique : courbe prédite
+                with c2:
+                    bx, bq = res.path_coefficients.loc[a, d], res.path_coefficients.loc[f"{a}:{b}", d]
+                    mu, sd = getattr(res, "interaction_scale", {}).get(f"{a}:{b}", (0.0, 1.0))
+                    xs = np.linspace(-2.5, 2.5, 51)
+                    curve = pd.DataFrame({"x": xs, "y": bx * xs + bq * (xs ** 2 - mu) / sd})
+                    st.altair_chart(alt.Chart(curve).mark_line(strokeWidth=2, color=SERIES[0]).encode(
+                        x=alt.X("x:Q", title=T("{a} (écarts-types)", a=a)),
+                        y=alt.Y("y:Q", title=T("{d} prédit (écarts-types)", d=d))).properties(height=260),
+                        width="stretch")
+                continue
             with c2:
                 lines = pd.DataFrame([{"x": xv, "y": row[f"{d} si {a}={'-1' if xv < 0 else '+1'}"],
                                        "niveau": f"{b} = {lvl:+.0f} {T('ET')}" if lvl else f"{b} = {T('moyenne')}"}
@@ -718,7 +763,7 @@ with tabs[3]:
 # ---------------------------------------------------------------- analyses avancées
 ADV = [T("Prédiction (PLSpredict, CVPAT)"), T("Multigroupe (MGA, MICOM)"), T("Importance-performance (IPMA)"),
        T("Conditions nécessaires (NCA)"), T("Endogénéité (copules)"), "CB-SEM / CFA", T("Segmentation (FIMIX-PLS)")]
-base_key = (data_id, st.session_state["syntax"], tuple(sorted(fit_kwargs.items())), seed, len(data))
+base_key = (data_key, st.session_state["syntax"], tuple(sorted(fit_kwargs.items())), seed, len(data))
 plain = not model.interactions and not model.higher_order
 plain_why = T("avec interaction") if model.interactions else T("d'ordre supérieur")
 
@@ -797,7 +842,7 @@ with tabs[4]:
             elif run_button(T("Lancer MGA et MICOM"), "run_mga"):
                 from openpls.mga import mga, mga_multi
 
-                dg, _ = prepare_data(raw, model, keep=[gcol])
+                dg, _ = prepare_data(raw, model, keep=[gcol], missing=missing)
                 dg = dg[dg[gcol].isin(pick)].reset_index(drop=True)
                 bar = st.progress(0.0, text=T("Permutations et bootstrap…"))
                 tick = lambda i, n: bar.progress(min(i / n, 1.0)) if i % 20 == 0 else None  # noqa: E731

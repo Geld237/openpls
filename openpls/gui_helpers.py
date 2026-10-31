@@ -333,23 +333,162 @@ def to_excel(sheets: dict[str, pd.DataFrame]) -> bytes:
     return buf.getvalue()
 
 
-def prepare_data(df: pd.DataFrame, model: Model, keep: list[str] | None = None) -> tuple[pd.DataFrame, list[str]]:
-    """Sélectionne les indicateurs, convertit en numérique, supprime les lignes incomplètes.
+def impute(x: pd.DataFrame, method: str, iterations: int = 10) -> pd.DataFrame:
+    """Remplace les valeurs manquantes : "mean" (moyenne de la colonne) ou "regression" (imputation itérative :
+    chaque colonne est prédite par régression linéaire sur les autres, jusqu'à stabilité)."""
+    x = x.astype(float)
+    miss = x.isna()
+    filled = x.fillna(x.mean())
+    if method == "mean" or not miss.any().any():
+        return filled
+    cols = [c for c in x.columns if miss[c].any()]
+    for _ in range(iterations):
+        prev = filled[cols].copy()
+        for c in cols:
+            others = [o for o in x.columns if o != c]
+            obs = ~miss[c]
+            a = np.column_stack([np.ones(obs.sum()), filled.loc[obs, others].to_numpy()])
+            beta, *_ = np.linalg.lstsq(a, filled.loc[obs, c].to_numpy(), rcond=None)
+            b = np.column_stack([np.ones((~obs).sum()), filled.loc[~obs, others].to_numpy()])
+            pred = b @ beta
+            lo, hi = x[c].min(), x[c].max()  # reste dans l'étendue observée de l'échelle
+            filled.loc[~obs, c] = np.clip(pred, lo, hi)
+        if np.nanmax(np.abs(filled[cols].to_numpy() - prev.to_numpy())) < 1e-6:
+            break
+    return filled
+
+
+def prepare_data(df: pd.DataFrame, model: Model, keep: list[str] | None = None,
+                 missing: str = "listwise") -> tuple[pd.DataFrame, list[str]]:
+    """Sélectionne les indicateurs, convertit en numérique et traite les valeurs manquantes :
+    "listwise" (lignes incomplètes supprimées), "mean" (moyenne) ou "regression" (imputation itérative).
 
     `keep` : colonnes supplémentaires conservées telles quelles (ex. variable de groupe)."""
     warnings = []
     keep = [c for c in (keep or []) if c not in model.indicators]
-    missing = [c for c in model.indicators + keep if c not in df.columns]
-    if missing:
-        raise KeyError(T("Colonnes introuvables dans les données : {cols}", cols=", ".join(missing)))
+    absent = [c for c in model.indicators + keep if c not in df.columns]
+    if absent:
+        raise KeyError(T("Colonnes introuvables dans les données : {cols}", cols=", ".join(absent)))
     sub = df[model.indicators].apply(pd.to_numeric, errors="coerce")
     for c in keep:
         sub[c] = df[c]
     n0 = len(sub)
+    if missing in ("mean", "regression"):
+        n_miss = int(sub[model.indicators].isna().sum().sum())
+        sub[model.indicators] = impute(sub[model.indicators], missing)
+        if keep:
+            sub = sub.dropna(subset=keep)
+        if n_miss:
+            warnings.append(T("{k} valeur(s) manquante(s) remplacée(s) ({how}) : {n} observations utilisées.",
+                              k=n_miss, n=len(sub), how=T("moyenne") if missing == "mean" else T("régression")))
     sub = sub.dropna()
-    if len(sub) < n0:
+    if len(sub) < n0 and missing == "listwise":
         warnings.append(T("{k} ligne(s) avec valeurs manquantes ou non numériques supprimée(s) "
                           "(suppression par liste) : {n} observations utilisées.", k=n0 - len(sub), n=len(sub)))
     if len(sub) < 30:
         warnings.append(T("Moins de 30 observations : les résultats seront très instables."))
     return sub.reset_index(drop=True), warnings
+
+
+# ---------------------------------------------------------------- variables de contrôle
+def _slug(v) -> str:
+    s = re.sub(r"[^0-9A-Za-z_]+", "_", str(v)).strip("_")
+    return s or "x"
+
+
+def _categories(series: pd.Series) -> list | None:
+    """Modalités d'une colonne catégorielle (texte, 2 à 15 modalités), sinon None."""
+    if pd.api.types.is_numeric_dtype(series):
+        return None
+    lv = sorted(series.dropna().astype(str).unique())
+    return lv if 2 <= len(lv) <= 15 else None
+
+
+def expand_controls(syntax: str, df: pd.DataFrame) -> tuple[str, list[str]]:
+    """Dans les lignes structurelles, un nom qui n'est pas une variable latente mais une colonne des données
+    devient une variable de contrôle : construit à un seul indicateur (colonne numérique) ou indicatrices
+    0/1 (colonne catégorielle, la première modalité servant de référence)."""
+    lines = syntax.splitlines()
+    latents, indicators = set(), set()
+    for ln in lines:
+        body = ln.split("#", 1)[0]
+        m = re.match(r"\s*([A-Za-z_][\w.]*)\s*(=~|<~)\s*(.+)", body)
+        if m:
+            latents.add(m.group(1))
+            indicators.update(t.strip() for t in m.group(3).split("+"))
+    taken = latents | set(map(str, df.columns))
+    added: dict[str, list[str]] = {}  # colonne -> latentes créées
+    new_meas: list[str] = []
+    notes: list[str] = []
+
+    def latent_for(col: str) -> list[str] | None:
+        if col in added:
+            return added[col]
+        if col in latents or col not in df.columns or col in indicators:
+            return None
+        cats = _categories(df[col])
+        if cats is None and not pd.api.types.is_numeric_dtype(df[col]):
+            return None
+        if cats is None:
+            name = col.upper() if col.upper() not in taken else f"{col}_c"
+            taken.add(name)
+            new_meas.append(f"{name} =~ {col}")
+            added[col] = [name]
+            notes.append(T("{c} : variable de contrôle (construit {n} à un indicateur)", c=col, n=name))
+        else:
+            names = []
+            for lvl in cats[1:]:
+                ind = f"{col}_{_slug(lvl)}"
+                name = ind.upper() if ind.upper() not in taken else f"{ind}_d"
+                taken.add(name)
+                new_meas.append(f"{name} =~ {ind}")
+                names.append(name)
+            added[col] = names
+            notes.append(T("{c} : variable catégorielle, {k} indicatrice(s) (référence : {r})",
+                           c=col, k=len(names), r=cats[0]))
+        return added[col]
+
+    out = []
+    for ln in lines:
+        body, _, comment = ln.partition("#")
+        m = re.match(r"(\s*)([^~=<]+?)\s*~\s*([^~].*)$", body)
+        if m and "=~" not in body and "<~" not in body:
+            lhs = m.group(2).strip()
+            rep = latent_for(lhs)
+            if rep and len(rep) == 1:
+                lhs = rep[0]
+            terms = []
+            for t in m.group(3).split("+"):
+                t = t.strip()
+                if ":" in t:
+                    parts = [(latent_for(p.strip()) or [p.strip()]) for p in t.split(":")]
+                    terms.append(":".join(p[0] for p in parts) if all(len(p) == 1 for p in parts) else t)
+                else:
+                    rep = latent_for(t)
+                    terms.append(" + ".join(rep) if rep else t)
+            ln = f"{m.group(1)}{lhs} ~ {' + '.join(terms)}" + (f"  #{comment}" if comment else "")
+        out.append(ln)
+    if not new_meas:
+        return syntax, []
+    # nouvelles lignes de mesure : avant la première ligne structurelle
+    first_struct = next((i for i, ln in enumerate(out)
+                         if "~" in ln.split("#", 1)[0] and "=~" not in ln and "<~" not in ln), len(out))
+    while first_struct > 0 and out[first_struct - 1].strip().startswith("#"):  # garde le commentaire du bloc
+        first_struct -= 1
+    block = [T("# Variables de contrôle (un indicateur)")] + new_meas + [""]
+    return "\n".join(out[:first_struct] + block + out[first_struct:]), notes
+
+
+def add_dummy_columns(df: pd.DataFrame, syntax: str) -> pd.DataFrame:
+    """Ajoute les indicatrices 0/1 (colonne_modalité) citées dans la syntaxe."""
+    extra = {}
+    for col in df.columns:
+        cats = _categories(df[col])
+        if not cats:
+            continue
+        s = df[col].astype("string")
+        for lvl in cats:
+            name = f"{col}_{_slug(lvl)}"
+            if name not in df.columns and re.search(rf"(?<![\w.]){re.escape(name)}(?![\w.])", syntax):
+                extra[name] = (s == str(lvl)).astype(float).where(s.notna())
+    return df.assign(**extra) if extra else df

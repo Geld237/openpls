@@ -384,3 +384,22 @@ def test_top_menu_and_update_check(monkeypatch):
     labels = [b.label for b in at.button]
     assert {"À propos", "Mises à jour", "Paramètres"} <= set(labels)
     assert not at.exception, at.exception
+
+
+def test_control_variables_and_quadratic_effect():
+    import numpy as np
+
+    from openpls.gui_helpers import add_dummy_columns, expand_controls
+
+    d = simulate(300, seed=2)
+    rng = np.random.default_rng(0)
+    d["age"] = rng.integers(18, 70, 300)
+    d["pays"] = rng.choice(["FR", "CM", "SN"], 300)
+    syn = SYNTAX.replace("ETA1 ~ XI1 + XI2", "ETA1 ~ XI1 + XI2 + age + pays + XI1:XI1")
+    s2, notes = expand_controls(syn, d)
+    assert "AGE =~ age" in s2 and "PAYS_FR =~ pays_FR" in s2 and len(notes) == 2
+    d2 = add_dummy_columns(d, s2)
+    m = Model.from_syntax(s2)
+    r = fit(d2[m.indicators], m)
+    assert {"AGE", "PAYS_FR", "PAYS_SN", "XI1:XI1"} <= set(r.path_coefficients.index)
+    assert expand_controls(s2, d2)[0] == s2  # idempotent

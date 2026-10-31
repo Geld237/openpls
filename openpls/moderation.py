@@ -143,6 +143,11 @@ def simple_slopes(res, x: str, m: str, target: str, levels=(-1.0, 0.0, 1.0)) -> 
         raise KeyError(f"Pas d'interaction entre {x} et {m}")
     bx, bm, bxm = pc.loc[x, target], pc.loc[m, target], pc.loc[name, target]
     mu, sd = getattr(res, "interaction_scale", {}).get(name, (0.0, 1.0))
+    if x == m:  # effet quadratique : Y = b X + q (X² - μ)/σ ; pente en X = x0 : b + 2 q x0 / σ
+        rows = [{f"{m} (ET)": lvl, "pente": bx + 2 * bxm * lvl / sd,
+                 f"{target} si {x}=-1": bx * -1.0 + bxm * (1.0 - mu) / sd,
+                 f"{target} si {x}=+1": bx * 1.0 + bxm * (1.0 - mu) / sd} for lvl in levels]
+        return pd.DataFrame(rows).set_index(f"{m} (ET)")
     rows = []
     for lvl in levels:
         pred = lambda xv: bx * xv + bm * lvl + bxm * (xv * lvl - mu) / sd  # noqa: E731

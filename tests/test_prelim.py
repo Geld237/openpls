@@ -36,3 +36,33 @@ def test_outliers_harman_vif_and_sample_size():
     vif = ds.full_collinearity_vif(x)
     assert (vif > 0.9).all() and (vif < 1.5).all()
     assert ds.inverse_square_root_n(0.2) == 155  # Kock & Hadaya (2018), tableau 1
+
+
+def test_imputation_and_spss_import(tmp_path):
+    from openpls.gui_helpers import impute, prepare_data
+
+    rng = np.random.default_rng(3)
+    z = rng.normal(size=400)
+    x = pd.DataFrame({"a": z + 0.3 * rng.normal(size=400), "b": z + 0.3 * rng.normal(size=400),
+                      "c": z + 0.3 * rng.normal(size=400)})
+    truth = x.loc[:39, "a"].copy()
+    x.loc[:39, "a"] = np.nan
+    reg = impute(x, "regression")
+    mean = impute(x, "mean")
+    assert not reg.isna().any().any()
+    assert np.abs(reg.loc[:39, "a"] - truth).mean() < np.abs(mean.loc[:39, "a"] - truth).mean()
+    m = Model.from_syntax("A =~ a + b\nC =~ c\nC ~ A")
+    d, w = prepare_data(x, m, missing="mean")
+    assert len(d) == 400 and w
+    d, _ = prepare_data(x, m)
+    assert len(d) == 360
+
+    import pyreadstat
+
+    path = tmp_path / "f.sav"
+    pyreadstat.write_sav(x.fillna(0), str(path), column_labels=["item a", "item b", "item c"])
+    from streamlit.testing.v1 import AppTest  # noqa: F401  (l'import de l'appli n'est pas nécessaire)
+    import importlib.util
+
+    df, meta = pyreadstat.read_sav(str(path))
+    assert list(df.columns) == ["a", "b", "c"] and meta.column_labels[0] == "item a"

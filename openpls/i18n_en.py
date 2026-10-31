@@ -599,3 +599,26 @@ EN.update({
     "À propos": "About",
     "Mises à jour": "Updates",
 })
+
+# ---------------------------------------------------------------- données : import, manquants
+EN.update({
+    "CSV, Excel, SPSS, Stata ou projet OpenPLS": "CSV, Excel, SPSS, Stata or OpenPLS project",
+    "Valeurs manquantes": "Missing values",
+    "Suppression par liste": "Listwise deletion",
+    "Remplacement par la moyenne": "Mean replacement",
+    "Imputation par régression": "Regression imputation",
+    "Suppression par liste : lignes incomplètes retirées (recommandé si peu de manquants). Moyenne : simple mais "
+    "réduit la variance. Régression : chaque indicateur est prédit par les autres (imputation itérative).":
+        "Listwise deletion: incomplete rows removed (recommended with few missing values). Mean: simple but "
+        "shrinks variance. Regression: each indicator is predicted from the others (iterative imputation).",
+    "{k} valeur(s) manquante(s) remplacée(s) ({how}) : {n} observations utilisées.":
+        "{k} missing value(s) replaced ({how}): {n} observations used.",
+    "régression": "regression",
+})
+
+EN.update({
+    "{c} : variable de contrôle (construit {n} à un indicateur)": "{c}: control variable (single-indicator construct {n})",
+    "{c} : variable catégorielle, {k} indicatrice(s) (référence : {r})":
+        "{c}: categorical variable, {k} dummy variable(s) (reference: {r})",
+    "# Variables de contrôle (un indicateur)": "# Control variables (single indicator)",
+})
