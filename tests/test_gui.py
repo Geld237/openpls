@@ -313,3 +313,21 @@ def test_separator_follows_language():
     assert separator_for("fr_FR.UTF-8") == "," and separator_for("French_France") == ","
     assert separator_for("de_DE") == "," and separator_for("en_US") == "." and separator_for("English_United States") == "."
     assert separator_for(None) == "."
+
+
+def test_indicators_point_to_nearest_edge():
+    """Indicateurs du côté du bord le plus proche : exogènes à gauche, cible finale à droite, milieu en bas."""
+    import re as _re
+
+    m = Model.from_syntax(SYNTAX.replace("ETA2 ~ ETA1", "ETA2 ~ ETA1 + XI1"))
+    dot = model_to_dot(m, fit(simulate(200, seed=3), m))
+    assert "layout=neato" in dot
+    pos = {n: tuple(map(float, xy.split(","))) for n, xy in _re.findall(r'"(\w+:[\w]+)" \[.*?pos="([-\d.]+,[-\d.]+)!"', dot)}
+    assert pos["mv:xi1_1"][0] < pos["lv:XI1"][0]      # gauche
+    assert pos["mv:eta2_1"][0] > pos["lv:ETA2"][0]    # droite
+    assert pos["mv:eta1_1"][1] < pos["lv:ETA1"][1]    # au milieu : en bas
+    # positions de l'éditeur : ETA1 tout en haut -> ses indicateurs au-dessus
+    ed = {"XI1": (0, 200), "XI2": (0, 400), "ETA1": (300, 0), "ETA2": (600, 300)}
+    dot = model_to_dot(m, positions=ed)
+    pos = {n: tuple(map(float, xy.split(","))) for n, xy in _re.findall(r'"(\w+:[\w]+)" \[.*?pos="([-\d.]+,[-\d.]+)!"', dot)}
+    assert pos["mv:eta1_1"][1] > pos["lv:ETA1"][1]

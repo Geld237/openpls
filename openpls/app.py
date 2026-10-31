@@ -392,7 +392,7 @@ with page_model:
 
     with right:
         if model is not None:
-            st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=label_mode, alpha=alpha), width="stretch")
+            st.graphviz_chart(model_to_dot(model, res, positions=st.session_state.get("editor_pos"), boot=boot, label_mode=label_mode, alpha=alpha), width="stretch")
             if res is None:
                 st.caption("Clique sur « Estimer le modèle » pour afficher les estimations sur le diagramme.")
 
@@ -443,7 +443,7 @@ with page_res:
                               "le gras des tableaux et les intervalles de confiance.")
                 alpha = st.session_state["alpha"]
         _mode = st.session_state.get("sig_view", "stars")
-        st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=_mode,
+        st.graphviz_chart(model_to_dot(model, res, positions=st.session_state.get("editor_pos"), boot=boot, label_mode=_mode,
                                        alpha=alpha),
                           width="stretch")
         if boot is not None and _mode == "colors":
