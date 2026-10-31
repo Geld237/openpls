@@ -5,6 +5,7 @@
 #endif
 
 [Setup]
+ShowLanguageDialog=yes
 AppId={{E587DE54-BE1C-47F4-9EFE-03767BDAAD4A}
 AppName=OpenPLS
 AppVersion={#AppVersion}
@@ -27,11 +28,19 @@ UninstallDisplayIcon={app}\OpenPLS.exe
 Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[CustomMessages]
+french.LangCode=fr
+english.LangCode=en
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "..\dist\OpenPLS\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+
+[INI]
+; langue choisie dans l'installateur : OpenPLS en déduit le séparateur décimal (fr : 0,318 ; en : 0.318)
+Filename: "{app}\settings.ini"; Section: "general"; Key: "language"; String: "{cm:LangCode}"
 
 [Icons]
 Name: "{group}\OpenPLS"; Filename: "{app}\OpenPLS.exe"

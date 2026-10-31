@@ -36,9 +36,13 @@ def bootstrap_statistics(
     seed: int | None = 42,
     alpha: float = 0.05,
     progress: Callable[[int, int], None] | None = None,
+    keep_draws: bool = False,
     **fit_kwargs,
 ) -> pd.DataFrame:
-    """Bootstrap générique : `statistic(résultat) -> pd.Series` est recalculée sur chaque échantillon."""
+    """Bootstrap générique : `statistic(résultat) -> pd.Series` est recalculée sur chaque échantillon.
+
+    `keep_draws=True` conserve les tirages dans `attrs["draws"]` (tableau tirages × statistiques) :
+    `with_confidence_level` peut alors recalculer les intervalles à un autre seuil sans relancer."""
     rng = np.random.default_rng(seed)
     est = statistic(fit(data, model, **fit_kwargs))
     n = len(data)
@@ -80,6 +84,8 @@ def bootstrap_statistics(
         index=est.index,
     )
     out.attrs["n_boot_ok"] = len(draws)
+    if keep_draws:
+        out.attrs["draws"] = draws
     out.attrs["n_boot_failed"] = failures
     out.attrs["n_boot_nonconverged"] = nonconv
     out.attrs["n_boot_inadmissible"] = inadm
@@ -118,3 +124,16 @@ def bootstrap(
 ) -> pd.DataFrame:
     """Bootstrap des coefficients de chemin : estimation, moyenne bootstrap, SE, t, p, IC."""
     return bootstrap_statistics(data, model, _paths, n_boot=n_boot, seed=seed, alpha=alpha, **fit_kwargs)
+
+
+def with_confidence_level(boot: pd.DataFrame, draws: np.ndarray, alpha: float) -> pd.DataFrame:
+    """Remplace les intervalles percentiles de `boot` par ceux du seuil `alpha`, à partir des tirages.
+
+    t, p et erreurs-types ne dépendent pas du seuil : seul l'intervalle change."""
+    out = boot[[c for c in boot.columns if not str(c).startswith("ci_")]].copy()
+    lo, hi = np.percentile(draws, [100 * alpha / 2, 100 * (1 - alpha / 2)], axis=0)
+    out[f"ci_{alpha/2:.3f}"] = lo
+    out[f"ci_{1-alpha/2:.3f}"] = hi
+    out.attrs = {k: v for k, v in boot.attrs.items() if k != "draws"}
+    out.attrs["alpha"] = alpha
+    return out

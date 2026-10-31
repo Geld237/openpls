@@ -248,3 +248,39 @@ def test_navigation_follows_the_workflow():
     at.sidebar.radio(key="source").set_value("Exemple de second ordre").run()
     assert at.session_state["page"] == "Modèle"
     assert not at.exception, at.exception
+
+
+def test_changing_threshold_keeps_bootstrap_and_stars():
+    """Changer le seuil après l'estimation ne fait plus disparaître t, p et étoiles : seul l'IC change."""
+    at = _app(auto_boot=True)
+    at.session_state["n_boot"] = 100
+    at.run()
+    _btn(at, "Estimer").click().run()
+    for a, lo in ((0.01, "IC 0.5 %"), (0.10, "IC 5 %"), (0.05, "IC 2.5 %")):
+        at.sidebar.selectbox(key="alpha").set_value(a).run()
+        assert not at.exception, at.exception
+        paths = next(df.value for df in at.dataframe if df.value.index.name == "chemin")
+        assert {"t", "p", "sig.", lo} <= set(paths.columns), (a, list(paths.columns))
+        assert paths.loc["ETA1 -> ETA2", "sig."] == "***"
+        dot = " ".join(g.proto.spec for g in at.get("graphviz_chart"))
+        assert "***" in dot
+
+
+def test_decimal_comma(monkeypatch):
+    monkeypatch.setenv("OPENPLS_DECIMAL", ",")
+    at = _app(auto_boot=True)
+    at.session_state["n_boot"] = 100
+    at.run()
+    _btn(at, "Estimer").click().run()
+    assert not at.exception, at.exception
+    dot = " ".join(g.proto.spec for g in at.get("graphviz_chart"))
+    assert "R² = 0," in dot and "R² = 0." not in dot
+    assert any("0,001" in c.value for c in at.caption)
+
+
+def test_separator_follows_language():
+    from openpls.settings import separator_for
+
+    assert separator_for("fr_FR.UTF-8") == "," and separator_for("French_France") == ","
+    assert separator_for("de_DE") == "," and separator_for("en_US") == "." and separator_for("English_United States") == "."
+    assert separator_for(None) == "."

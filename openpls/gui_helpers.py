@@ -5,6 +5,8 @@ import io
 import re
 from collections import OrderedDict
 
+import html
+
 import numpy as np
 import pandas as pd
 
@@ -35,42 +37,71 @@ def _q(s: str) -> str:
 SIG_POS, SIG_NEG, NONSIG = "#2E5E9E", "#B83A2E", "#98A2B3"
 
 
-def stars(p: float) -> str:
-    """Convention des articles : *** p < 0,001 · ** p < 0,01 · * p < 0,05 · ns sinon."""
+DECIMAL = "."  # séparateur décimal de l'affichage ; fixé par l'application (set_decimal)
+
+
+def set_decimal(sep: str) -> None:
+    global DECIMAL
+    DECIMAL = "," if sep == "," else "."
+
+
+def num(v: float, digits: int = 3) -> str:
+    """Nombre formaté avec le séparateur décimal choisi (0,318 ou 0.318)."""
+    s = f"{v:.{digits}f}"
+    return s.replace(".", ",") if DECIMAL == "," else s
+
+
+def stars(p: float, alpha: float = 0.05) -> str:
+    """Convention des articles : *** p < 0,001 · ** p < 0,01 · * p < 0,05 ; au seuil de 10 %, † p < 0,10."""
     if p is None or not np.isfinite(p):
         return ""
-    return "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+    if p < 0.001:
+        return "***"
+    if p < 0.01:
+        return "**"
+    if p < 0.05:
+        return "*"
+    if alpha >= 0.10 and p < 0.10:
+        return "†"
+    return "ns"
+
+
+def stars_legend(alpha: float = 0.05) -> str:
+    out = f"*** p < {num(0.001)}, ** p < {num(0.01, 2)}, * p < {num(0.05, 2)}"
+    if alpha >= 0.10:
+        out += f", † p < {num(0.10, 2)}"
+    return out + ", ns non significatif"
 
 
 def fmt_p(p: float) -> str:
-    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+    return f"< {num(0.001)}" if p < 0.001 else num(p)
 
 
-def _edge_label(value: float, key, boot, mode: str) -> str:
+def _edge_label(value: float, key, boot, mode: str, alpha: float = 0.05) -> str:
     """Texte d'une flèche : coefficient (+ étoiles, p ou t si le bootstrap est disponible)."""
     if boot is None or key not in boot.index:
-        return f"{value:.3f}"
+        return num(value)
     r = boot.loc[key]
-    st = stars(r["p_value"])
+    st = stars(r["p_value"], alpha)
     if mode == "p":
-        return f"{value:.3f}\\n(p {fmt_p(r['p_value']) if r['p_value'] < 0.001 else '= ' + fmt_p(r['p_value'])})"
+        return f"{num(value)}\\n(p {fmt_p(r['p_value']) if r['p_value'] < 0.001 else '= ' + fmt_p(r['p_value'])})"
     if mode == "t":
-        return f"{value:.3f}\\n(t = {r['t_value']:.2f})"
-    return f"{value:.3f}{'' if st == 'ns' else st}" + (" ns" if st == "ns" else "")
+        return f"{num(value)}\\n(t = {num(r['t_value'], 2)})"
+    return f"{num(value)}{'' if st == 'ns' else st}" + (" ns" if st == "ns" else "")
 
 
-def _edge_style(value: float, key, boot) -> str:
+def _edge_style(value: float, key, boot, alpha: float = 0.05) -> str:
     if boot is None or key not in boot.index:
         return f'color="{SIG_POS}", fontcolor="{SIG_POS}"'
     p = boot.loc[key, "p_value"]
-    if not (np.isfinite(p) and p < 0.05):
+    if not (np.isfinite(p) and p < alpha):
         return f'color="{NONSIG}", fontcolor="#6B7889", style=dashed'
     c = SIG_POS if value >= 0 else SIG_NEG
     return f'color="{c}", fontcolor="{c}"'
 
 
 def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.DataFrame | None = None,
-                 label_mode: str = "stars") -> str:
+                 label_mode: str = "stars", alpha: float = 0.05) -> str:
     """Diagramme Graphviz (DOT) du modèle, annoté des estimations si `res` est fourni.
 
     `boot` : tableau de bootstrap_statistics (index (type, nom)) ; les flèches portent alors
@@ -95,11 +126,13 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
 
         hoc_tbl = higher_order_measurement(res)["components"]
     for lv in model.latents:
-        label = lv if lv not in r2 else f"{lv}\\nR² = {r2[lv]:.3f}"
+        name = html.escape(lv)
+        label = f'<{name}>' if lv not in r2 else (
+            f'<{name}<BR/><FONT POINT-SIZE="8" COLOR="#4A5A6C">R² = {num(r2[lv])}</FONT>>')
         extra = ", peripheries=2" if lv in getattr(model, "higher_order", {}) else ""
-        lines.append(
-            f'  {_q("lv:" + lv)} [label={_q(label)}, shape=ellipse, style=filled, '
-            f'fillcolor="#E6EDF7", color="#2E5E9E", penwidth=1.5{extra}];'
+        lines.append(  # ellipse ajustée au texte : marge réduite, taille minimale faible
+            f'  {_q("lv:" + lv)} [label={label}, shape=ellipse, style=filled, margin="0.10,0.05", '
+            f'width=0.5, height=0.3, fillcolor="#E6EDF7", color="#2E5E9E", penwidth=1.3{extra}];'
         )
     if show_indicators:
         for lv in model.latents:
@@ -112,8 +145,8 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
                         val, key = meas.outer_loadings[(lv, ind)], ("outer_loading", f"{lv} -> {ind}")
                     else:
                         val, key = meas.outer_weights[(lv, ind)], ("outer_weight", f"{ind} -> {lv}")
-                    lab = f", label={_q(_edge_label(val, key, boot, label_mode))}"
-                    if boot is not None and key in boot.index and not boot.loc[key, "p_value"] < 0.05:
+                    lab = f", label={_q(_edge_label(val, key, boot, label_mode, alpha))}"
+                    if boot is not None and key in boot.index and not boot.loc[key, "p_value"] < alpha:
                         lab += f', style=dashed, color="{NONSIG}"'
                 if model.modes[lv] == "A":
                     lines.append(f'  {_q("lv:" + lv)} -> {_q("mv:" + ind)} [arrowsize=0.6{lab}];')
@@ -127,7 +160,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
                     val, key = hoc_tbl.loc[(hoc, loc), "chargement"], ("hoc_loading", f"{hoc} -> {loc}")
                 else:
                     val, key = hoc_tbl.loc[(hoc, loc), "poids"], ("hoc_weight", f"{loc} -> {hoc}")
-                lab = f", label={_q(_edge_label(val, key, boot, label_mode))}"
+                lab = f", label={_q(_edge_label(val, key, boot, label_mode, alpha))}"
             a, b = (hoc, loc) if model.modes[hoc] == "A" else (loc, hoc)
             lines.append(f'  {_q("lv:" + a)} -> {_q("lv:" + b)} [color="#6B7889", fontcolor="#4A5A6C", '
                          f'style=dashed, arrowsize=0.7{lab}];')
@@ -136,7 +169,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         if res is not None:
             v = res.path_coefficients.loc[s, d]
             key = ("direct", f"{s} -> {d}")
-            attrs = (_edge_style(v, key, boot) + f", label={_q(_edge_label(v, key, boot, label_mode))}"
+            attrs = (_edge_style(v, key, boot, alpha) + f", label={_q(_edge_label(v, key, boot, label_mode, alpha))}"
                      f", penwidth={1 + 3 * min(abs(v), 1):.2f}")
         lines.append(f'  {_q("lv:" + s)} -> {_q("lv:" + d)} [{attrs}];')
     for a, b, d in getattr(model, "interactions", []):
@@ -145,9 +178,9 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         if res is not None and name in res.path_coefficients.index:
             v = res.path_coefficients.loc[name, d]
             key = ("direct", f"{name} -> {d}")
-            attrs = _edge_style(v, key, boot) + f", label={_q(_edge_label(v, key, boot, label_mode))}"
+            attrs = _edge_style(v, key, boot, alpha) + f", label={_q(_edge_label(v, key, boot, label_mode, alpha))}"
             if boot is None or key not in boot.index:
-                attrs = 'color="#B8862B", fontcolor="#8a6d1f", style=dashed' + f", label={_q(f'{v:.3f}')}"
+                attrs = 'color="#B8862B", fontcolor="#8a6d1f", style=dashed' + f", label={_q(num(v))}"
         lines.append(f'  {_q("ix:" + name)} [label={_q(a + " × " + b)}, shape=diamond, style=filled, '
                      f'fillcolor="#FBF3E1", color="#B8862B", fontsize=9];')
         lines.append(f'  {_q("ix:" + name)} -> {_q("lv:" + d)} [{attrs}];')

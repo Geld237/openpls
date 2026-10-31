@@ -19,7 +19,10 @@ from openpls import Model, fit, bootstrap_statistics, quality_criteria, htmt, fo
 from openpls.effects import classify_mediation, effect_statistics, total_effects, specific_indirect_effects
 from openpls.editor import model_editor
 from openpls.assessment import measurement_statistics
-from openpls.gui_helpers import fmt_p, guess_syntax, model_to_dot, prepare_data, stars, to_excel
+from openpls.bootstrap import with_confidence_level
+from openpls.gui_helpers import (fmt_p, guess_syntax, model_to_dot, num, prepare_data, set_decimal, stars,
+                                 stars_legend, to_excel)
+from openpls.settings import decimal_separator, default_decimal, save_pref
 from openpls.higher_order import higher_order_measurement, higher_order_statistics, structural_view
 from openpls.moderation import simple_slopes, simple_slope_statistics
 from openpls.simulate import simulate, simulate_higher_order
@@ -27,6 +30,9 @@ from openpls.simulate import simulate, simulate_higher_order
 _HERE = Path(__file__).resolve().parent
 st.set_page_config(page_title="OpenPLS", page_icon=str(_HERE / "static" / "icon.png"), layout="wide")
 st.html(f"<style>{(_HERE / 'style.css').read_text(encoding='utf-8')}</style>")
+if "decimal" not in st.session_state:
+    st.session_state["decimal"] = decimal_separator()
+set_decimal(st.session_state["decimal"])
 st.logo(str(_HERE / "static" / "logo.svg"), size="large", icon_image=str(_HERE / "static" / "mark.svg"))
 
 EXAMPLE_SYNTAX = """# Modèle de mesure  ( =~ réflectif,  <~ formatif )
@@ -67,8 +73,9 @@ def fmt(df, digits: int = 3):
     """Mise en forme unique : `digits` décimales ; colonnes de p-values en « < 0.001 » / 3 décimales."""
     if isinstance(df, pd.Series):
         df = df.to_frame()
-    num = df.select_dtypes("number").columns
-    formats = {c: (lambda v: "" if pd.isna(v) else fmt_p(v)) if _is_p(c) else f"{{:.{digits}f}}" for c in num}
+    cols = df.select_dtypes("number").columns
+    formats = {c: (lambda v: "" if pd.isna(v) else fmt_p(v)) if _is_p(c)
+               else (lambda v, d=digits: "" if pd.isna(v) else num(v, d)) for c in cols}
     return df.style.format(formats, na_rep="")
 
 
@@ -159,14 +166,20 @@ def offer_file(label: str, data, filename: str, key: str, mime: str = "text/plai
             open_folder(Path(last).parent)
 
 
-def boot_display(df: pd.DataFrame) -> pd.DataFrame:
+def ic_label(col: str) -> str:
+    """« ci_0.025 » -> « IC 2,5 % »."""
+    v = float(str(col)[3:]) * 100
+    return f"IC {num(v, 1).rstrip('0').rstrip(',.')} %"
+
+
+def boot_display(df: pd.DataFrame, alpha: float = 0.05) -> pd.DataFrame:
     """Tableau de bootstrap présenté en français, avec étoiles de significativité."""
     lo = next(c for c in df.columns if str(c).startswith("ci_"))
     hi = [c for c in df.columns if str(c).startswith("ci_")][-1]
     out = pd.DataFrame({
-        "coefficient": df["estimate"], "sig.": df["p_value"].map(stars), "t": df["t_value"], "p": df["p_value"],
+        "coefficient": df["estimate"], "sig.": df["p_value"].map(lambda p: stars(p, alpha)), "t": df["t_value"], "p": df["p_value"],
         "erreur-type": df["std_error"], "moyenne bootstrap": df["boot_mean"],
-        f"IC {float(lo[3:]) * 100:g} %": df[lo], f"IC {float(hi[3:]) * 100:g} %": df[hi],
+        ic_label(lo): df[lo], ic_label(hi): df[hi],
     }, index=df.index)
     return out
 
@@ -229,6 +242,11 @@ with st.sidebar.expander("Options avancées"):
                      "two_stage_embedded": "Deux étapes, intégrée", "repeated_indicators": "Indicateurs répétés"}.get,
         help="Utilisée seulement si le modèle contient un construit d'ordre supérieur (`HOC =~ LV1 + LV2`).")
     seed = int(st.number_input("Graine aléatoire", 0, 10**6, 42, key="seed"))
+    st.selectbox("Séparateur décimal", [",", "."], key="decimal",
+                 format_func={",": "virgule (0,318)", ".": "point (0.318)"}.get,
+                 on_change=lambda: save_pref("decimal", st.session_state["decimal"]),
+                 help="Par défaut : la langue choisie à l'installation (ou celle du système). "
+                      f"Ici : {'virgule' if default_decimal() == ',' else 'point'}.")
 
 # ---------------------------------------------------------------- définition du modèle
 raw = raw.rename(columns=str)  # en-têtes numériques (fréquents dans Excel) -> texte, comme dans la syntaxe
@@ -333,13 +351,15 @@ with page_model:
         return pd.concat(parts)
 
 
-    def boot_key():
-        return (st.session_state["syntax"], fit_kwargs, int(n_boot), alpha, seed)
+    def boot_key():  # le seuil n'en fait pas partie : changer de seuil ne relance pas le bootstrap
+        return (st.session_state["syntax"], fit_kwargs, int(n_boot), seed)
 
 
     def current_boot():
         b = st.session_state.get("boot")
-        return b[5] if b and b[:5] == boot_key() and b[6] == data_id else None
+        if not (b and b[:4] == boot_key() and b[6] == data_id):
+            return None
+        return with_confidence_level(b[4], b[5], alpha)
 
 
     def run_bootstrap() -> None:
@@ -350,12 +370,13 @@ with page_model:
             with _w.catch_warnings():
                 _w.simplefilter("ignore")
                 bt = bootstrap_statistics(
-                    data, model, boot_stats, n_boot=int(n_boot), seed=seed, alpha=alpha,
+                    data, model, boot_stats, n_boot=int(n_boot), seed=seed, alpha=alpha, keep_draws=True,
                     progress=lambda i, n: bar.progress(i / n, text=f"Bootstrap (t et p) {i}/{n}")
                     if i % 25 == 0 or i == n else None,
                     **fit_kwargs,
                 )
-            st.session_state["boot"] = boot_key() + (bt, data_id)
+            draws = bt.attrs.pop("draws")
+            st.session_state["boot"] = boot_key() + (bt, draws, data_id)
         except Exception as e:  # noqa: BLE001
             st.error(f"Échec du bootstrap : {e}")
         bar.empty()
@@ -371,7 +392,7 @@ with page_model:
 
     with right:
         if model is not None:
-            st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=label_mode), width="stretch")
+            st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=label_mode, alpha=alpha), width="stretch")
             if res is None:
                 st.caption("Clique sur « Estimer le modèle » pour afficher les estimations sur le diagramme.")
 
@@ -388,7 +409,7 @@ with page_res:
         st.warning("Avec PLSc, seule la modération en deux étapes est corrigée de l'atténuation (Becker et al. 2018) ; "
                    "les approches par produit d'indicateurs sous-estiment l'effet d'interaction.")
     _sv = structural_view(res)
-    _r2 = "".join(f"<span>{html.escape(str(k))} {v:.3f}</span>" for k, v in _sv.r_squared.items())
+    _r2 = "".join(f"<span>{html.escape(str(k))} {num(v)}</span>" for k, v in _sv.r_squared.items())
     _items = [
         ("Méthode", ("PLSc" if res.consistent else "PLS") + f" <span>schéma {scheme}</span>"),
         ("Observations", f"{len(data)}"),
@@ -410,11 +431,12 @@ with page_res:
         if boot is not None:
             st.radio("Sur les flèches", ["stars", "p", "t"], horizontal=True, key="diag_mode",
                      format_func={"stars": "coefficient et étoiles", "p": "coefficient et p", "t": "coefficient et t"}.get)
-        st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=st.session_state.get("diag_mode", "stars")),
+        st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=st.session_state.get("diag_mode", "stars"),
+                                       alpha=alpha),
                           width="stretch")
         if boot is not None:
-            st.caption("*** p < 0,001 · ** p < 0,01 · * p < 0,05 · ns = non significatif (bootstrap, "
-                       f"{boot.attrs.get('n_boot_ok', '')} tirages). Bleu : effet positif significatif · rouge : effet "
+            st.caption(f"{stars_legend(alpha)} (bootstrap, {boot.attrs.get('n_boot_ok', '')} tirages). "
+                       f"Seuil retenu : {num(alpha * 100, 0)} %. Bleu : effet positif significatif · rouge : effet "
                        "négatif significatif · gris pointillé : non significatif. L'épaisseur suit la taille de l'effet.")
         else:
             st.caption("Les t et p (et les étoiles) apparaissent après le bootstrap : coche « Calculer t et p "
@@ -438,9 +460,9 @@ def with_inference(tbl: pd.DataFrame, kind: str, keys: list[str]) -> pd.DataFram
     tbl["erreur-type"] = [r["std_error"] if r is not None else np.nan for r in rows]
     tbl["t"] = [r["t_value"] if r is not None else np.nan for r in rows]
     tbl["p"] = [r["p_value"] if r is not None else np.nan for r in rows]
-    tbl[f"IC {lo[3:]}"] = [r[lo] if r is not None else np.nan for r in rows]
-    tbl[f"IC {hi[3:]}"] = [r[hi] if r is not None else np.nan for r in rows]
-    tbl["sig."] = [stars(r["p_value"]) if r is not None else "" for r in rows]
+    tbl[ic_label(lo)] = [r[lo] if r is not None else np.nan for r in rows]
+    tbl[ic_label(hi)] = [r[hi] if r is not None else np.nan for r in rows]
+    tbl["sig."] = [stars(r["p_value"], alpha) if r is not None else "" for r in rows]
     first = [c for c in tbl.columns if c not in ("sig.", "t", "p", "erreur-type") and not str(c).startswith("IC")]
     return tbl[first + ["sig.", "t", "p", "erreur-type"] + [c for c in tbl.columns if str(c).startswith("IC")]]
 
@@ -467,11 +489,11 @@ with tabs[0]:
             st.rerun()
         st.dataframe(fmt(paths_tbl), width="stretch")
     else:
-        sig_style = lambda v: "font-weight:700;color:#2E5E9E" if v not in ("", "ns") else "color:#6b6a66"  # noqa: E731
-        sty = fmt(paths_tbl).map(lambda v: "font-weight:700" if pd.notna(v) and v < 0.05 else "color:#6b6a66",
+        sig_style = lambda v: "font-weight:700;color:#2E5E9E" if v not in ("", "ns") else "color:#6B7889"  # noqa: E731
+        sty = fmt(paths_tbl).map(lambda v: "font-weight:700" if pd.notna(v) and v < alpha else "color:#6B7889",
                                  subset=["p"]).map(sig_style, subset=["sig."])
         st.dataframe(sty, width="stretch")
-        st.caption("*** p < 0,001 · ** p < 0,01 · * p < 0,05 · ns non significatif. t et p par bootstrap "
+        st.caption(f"{stars_legend(alpha)}. En gras : p < {num(alpha, 2)}. t et p par bootstrap "
                    f"({boot.attrs.get('n_boot_ok', '')} tirages) ; intervalle de confiance percentile.")
     c1, c2 = st.columns(2)
     with c1:
@@ -594,7 +616,7 @@ with tabs[3]:
         for kind, title in labels.items():
             if kind in boot_view.index.get_level_values(0):
                 st.subheader(title)
-                st.dataframe(fmt(boot_display(boot_view.loc[kind])), width="stretch")
+                st.dataframe(fmt(boot_display(boot_view.loc[kind], alpha)), width="stretch")
 
         rows = []
         for name in boot.loc["specific_indirect"].index if "specific_indirect" in boot.index.get_level_values(0) else []:
@@ -611,7 +633,7 @@ with tabs[3]:
                 kind_lbl = ("indirecte (type indéterminé : chemin direct non estimé)" if i_sig
                             else "aucun effet indirect")
             rows.append({"chemin": name, "indirect": i_est, "indirect signif.": "oui" if i_sig else "non",
-                         "direct": f"{d_est:.3f}" if has_d else "—",
+                         "direct": num(d_est) if has_d else "—",
                          "direct signif.": ("oui" if d_sig else "non") if has_d else "non estimé",
                          "type de médiation": kind_lbl})
         if rows:
