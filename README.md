@@ -81,7 +81,7 @@ Le navigateur s'ouvre sur `http://localhost:8501`. Ensuite :
 4. L'onglet **Significativité** détaille le bootstrap et l'analyse de médiation ; l'onglet **Analyses avancées** regroupe PLSpredict/CVPAT, MGA/MICOM, IPMA, NCA, endogénéité, CB-SEM/CFA et FIMIX-PLS.
 5. Exporte tous les résultats en Excel depuis la barre latérale.
 
-Les nombres s'affichent avec une virgule (0,318) ou un point (0.318) selon la langue choisie à l'installation (ou celle du système) ; le réglage se change dans *Options avancées*. Changer le seuil de significativité (1 %, 5 %, 10 %) ne relance pas le bootstrap : seuls les intervalles et la mise en évidence changent.
+Les nombres s'affichent avec une virgule (0,318) ou un point (0.318) selon la langue choisie à l'installation (ou celle du système) ; le réglage se change dans *Options avancées*. Au-dessus du diagramme des résultats, tu choisis d'afficher la significativité (étoiles, valeur p ou valeur t) ou de la masquer, et le seuil (1 %, 5 % ou 10 %). Changer de seuil ne relance pas le bootstrap : seuls les intervalles et la mise en évidence changent. Le bootstrap n'est pas obligatoire : décoche « Calculer t et p automatiquement » pour obtenir les coefficients seuls, plus vite.
 
 La barre du haut (logo et onglets Modèle, Résultats, Significativité, Analyses avancées) reste visible quand tu fais défiler la page. Après l'estimation, un bandeau résume la méthode, la taille de l'échantillon, la convergence, le bootstrap et les R².
 

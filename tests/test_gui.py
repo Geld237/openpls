@@ -257,13 +257,29 @@ def test_changing_threshold_keeps_bootstrap_and_stars():
     at.run()
     _btn(at, "Estimer").click().run()
     for a, lo in ((0.01, "IC 0.5 %"), (0.10, "IC 5 %"), (0.05, "IC 2.5 %")):
-        at.sidebar.selectbox(key="alpha").set_value(a).run()
+        at.radio(key="alpha").set_value(a).run()
         assert not at.exception, at.exception
         paths = next(df.value for df in at.dataframe if df.value.index.name == "chemin")
         assert {"t", "p", "sig.", lo} <= set(paths.columns), (a, list(paths.columns))
         assert paths.loc["ETA1 -> ETA2", "sig."] == "***"
         dot = " ".join(g.proto.spec for g in at.get("graphviz_chart"))
         assert "***" in dot
+    # le seuil choisi survit à un changement d'onglet et vaut pour la page Significativité
+    at.radio(key="alpha").set_value(0.01).run()
+    assert at.session_state["alpha_saved"] == 0.01
+    assert any("IC percentile à 99 %" in m.value for m in at.markdown)
+
+
+def test_significance_can_be_hidden_on_diagram():
+    at = _app(auto_boot=True)
+    at.session_state["n_boot"] = 100
+    at.run()
+    _btn(at, "Estimer").click().run()
+    at.radio(key="diag_mode").set_value("none").run()
+    assert not at.exception, at.exception
+    dot = next(g.proto.spec for g in at.get("graphviz_chart") if "R²" in g.proto.spec)
+    assert "*" not in dot and "style=dashed" not in dot and " ns" not in dot
+    assert at.radio(key="alpha").disabled
 
 
 def test_decimal_comma(monkeypatch):

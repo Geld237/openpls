@@ -226,8 +226,8 @@ auto_boot = st.sidebar.checkbox("Calculer t et p automatiquement", value=True, k
                                 help="Lance le bootstrap juste après l'estimation : t, p, intervalles de confiance "
                                      "et étoiles de significativité apparaissent dans les tableaux et le diagramme.")
 n_boot = st.sidebar.number_input("Échantillons bootstrap", 100, 20000, 1000, step=500, key="n_boot")
-alpha = st.sidebar.selectbox("Seuil de significativité", [0.05, 0.01, 0.10], key="alpha",
-                             format_func=lambda a: f"{a:.0%}".replace(".", ","))
+# seuil choisi au-dessus du diagramme des résultats ; gardé hors widget pour survivre aux changements de page
+alpha = st.session_state.setdefault("alpha_saved", 0.05)
 with st.sidebar.expander("Options avancées"):
     scheme = st.selectbox("Schéma de pondération interne", ["path", "factorial", "centroid"], key="scheme")
     moderation = st.selectbox(
@@ -429,18 +429,34 @@ with page_res:
         st.error("L'algorithme n'a pas convergé : vérifie la spécification du modèle.")
     with st.expander("Diagramme estimé", expanded=True):
         if boot is not None:
-            st.radio("Sur les flèches", ["stars", "p", "t"], horizontal=True, key="diag_mode",
-                     format_func={"stars": "coefficient et étoiles", "p": "coefficient et p", "t": "coefficient et t"}.get)
+            c_mode, c_alpha = st.columns([3, 2])
+            st.session_state.setdefault("diag_mode", "stars")  # étoiles par défaut
+            c_mode.radio("Significativité sur les flèches", ["none", "stars", "p", "t"], horizontal=True,
+                         key="diag_mode", format_func={"none": "masquée", "stars": "étoiles", "p": "valeur p",
+                                                       "t": "valeur t"}.get,
+                         help="« masquée » : coefficients seuls, sans étoiles ni couleur de significativité.")
+            if "alpha" not in st.session_state:
+                st.session_state["alpha"] = alpha
+            c_alpha.radio("Seuil de significativité", [0.01, 0.05, 0.10], horizontal=True, key="alpha",
+                          format_func=lambda a: f"{num(a * 100, 0)} %",
+                          on_change=lambda: st.session_state.update(alpha_saved=st.session_state["alpha"]),
+                          disabled=st.session_state.get("diag_mode") == "none",
+                          help="S'applique au diagramme, aux tableaux (étoiles, gras) et aux intervalles de confiance.")
+            alpha = st.session_state["alpha"]
         st.graphviz_chart(model_to_dot(model, res, boot=boot, label_mode=st.session_state.get("diag_mode", "stars"),
                                        alpha=alpha),
                           width="stretch")
-        if boot is not None:
+        if boot is not None and st.session_state.get("diag_mode") == "none":
+            st.caption("Coefficients seuls. Choisis « étoiles », « valeur p » ou « valeur t » pour afficher la "
+                       "significativité.")
+        elif boot is not None:
             st.caption(f"{stars_legend(alpha)} (bootstrap, {boot.attrs.get('n_boot_ok', '')} tirages). "
                        f"Seuil retenu : {num(alpha * 100, 0)} %. Bleu : effet positif significatif · rouge : effet "
                        "négatif significatif · gris pointillé : non significatif. L'épaisseur suit la taille de l'effet.")
         else:
-            st.caption("Les t et p (et les étoiles) apparaissent après le bootstrap : coche « Calculer t et p "
-                       "automatiquement » dans la barre latérale, ou lance-le dans l'onglet Significativité.")
+            st.caption("Coefficients seuls : le bootstrap n'a pas été lancé. Il n'est utile que pour la "
+                       "significativité (t, p, étoiles, intervalles de confiance) : lance-le dans l'onglet "
+                       "Significativité, ou coche « Calculer t et p automatiquement » dans la barre latérale.")
 
 meas = res.measurement_result
 sres = structural_view(res)  # sans les relations HOC <-> composantes (indicateurs répétés)
@@ -589,8 +605,9 @@ with tabs[2]:
         st.caption("Diagonale = √AVE ; elle doit dépasser les corrélations de sa ligne et de sa colonne.")
 
 with tabs[3]:
-    st.write(f"Bootstrap à **{int(n_boot)}** échantillons, IC percentile à {int((1 - alpha) * 100)} %. "
+    st.write(f"Bootstrap à **{int(n_boot)}** échantillons, IC percentile à {int(round((1 - alpha) * 100))} %. "
              "Peut prendre de quelques secondes à quelques minutes.")
+    st.caption("Le seuil (1 %, 5 % ou 10 %) se règle au-dessus du diagramme, dans l'onglet Résultats.")
 
     if st.button("▶  Lancer le bootstrap", key="run_boot"):
         run_bootstrap()

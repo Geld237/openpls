@@ -107,6 +107,8 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
     `boot` : tableau de bootstrap_statistics (index (type, nom)) ; les flèches portent alors
     des étoiles (ou p, ou t selon `label_mode` : "stars", "p", "t") et sont colorées :
     bleu = positif significatif, rouge = négatif significatif, gris pointillé = non significatif (5 %)."""
+    if label_mode == "none":  # significativité masquée : coefficients seuls, sans couleur ni pointillés
+        boot = None
     lines = [
         "digraph G {",
         '  rankdir=LR; splines=true; nodesep=0.25; ranksep=0.9; bgcolor="transparent";',
@@ -138,7 +140,8 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         for lv in model.latents:
             for ind in model.measurement.get(lv, []):
                 lines.append(f'  {_q("mv:" + ind)} [label={_q(ind)}, shape=box, style=filled, '
-                             f'fillcolor="#FBF3E1", color="#B8862B", fontsize=9, height=0.3];')
+                             f'fillcolor="#FBF3E1", color="#B8862B", fontsize=8, margin="0.08,0.03", '
+                             f'width=0.3, height=0.2, penwidth=0.8];')
                 lab = ""
                 if res is not None:
                     if model.modes[lv] == "A":
