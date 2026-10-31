@@ -57,8 +57,9 @@ def test_imputation_and_spss_import(tmp_path):
     d, _ = prepare_data(x, m)
     assert len(d) == 360
 
-    import pyreadstat
+    import pytest
 
+    pyreadstat = pytest.importorskip("pyreadstat")
     path = tmp_path / "f.sav"
     pyreadstat.write_sav(x.fillna(0), str(path), column_labels=["item a", "item b", "item c"])
     from streamlit.testing.v1 import AppTest  # noqa: F401  (l'import de l'appli n'est pas nécessaire)

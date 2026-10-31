@@ -733,3 +733,5 @@ EN.update({
     "Figure 1": "Figure 1", "Modèle estimé": "Estimated model", "Références": "References",
 })
 EN["Rapport Word indisponible : {e}"] = "Word report unavailable: {e}"
+EN["Lecture SPSS/Stata indisponible : installe le module pyreadstat (pip install pyreadstat), ou enregistre le fichier en CSV."] = \
+    "SPSS/Stata import unavailable: install the pyreadstat module (pip install pyreadstat), or save the file as CSV."

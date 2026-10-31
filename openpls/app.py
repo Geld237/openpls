@@ -142,7 +142,12 @@ def read_file(content: bytes, name: str) -> pd.DataFrame:
     if name.lower().endswith((".sav", ".zsav", ".dta")):  # SPSS, Stata : valeurs numériques, libellés à part
         import tempfile
 
-        import pyreadstat
+        try:
+            import pyreadstat
+        except ImportError:
+            st.error(T("Lecture SPSS/Stata indisponible : installe le module pyreadstat (pip install pyreadstat), "
+                       "ou enregistre le fichier en CSV."))
+            st.stop()
 
         with tempfile.NamedTemporaryFile(suffix=os.path.splitext(name)[1], delete=False) as tmp:
             tmp.write(content)
