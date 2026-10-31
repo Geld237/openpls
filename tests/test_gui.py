@@ -331,3 +331,12 @@ def test_indicators_point_to_nearest_edge():
     dot = model_to_dot(m, positions=ed)
     pos = {n: tuple(map(float, xy.split(","))) for n, xy in _re.findall(r'"(\w+:[\w]+)" \[.*?pos="([-\d.]+,[-\d.]+)!"', dot)}
     assert pos["mv:eta1_1"][1] > pos["lv:ETA1"][1]
+
+
+def test_edge_labels_have_opaque_background():
+    """Chaque chiffre de flèche est posé sur un fond : une flèche qui le croise passe derrière."""
+    m = Model.from_syntax(SYNTAX)
+    dot = model_to_dot(m, fit(simulate(200, seed=3), m))
+    edges = [l for l in dot.splitlines() if "->" in l and "label=" in l]
+    assert edges and all('BGCOLOR="#F5F7FA"' in l for l in edges)
+    assert "outputorder=edgesfirst" in dot

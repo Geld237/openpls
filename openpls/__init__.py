@@ -18,4 +18,4 @@ __all__ = [
     "quality_criteria", "fornell_larcker", "htmt", "f_squared",
     "total_effects", "total_indirect_effects", "specific_indirect_effects", "mediation_analysis",
 ]
-__version__ = "0.7.4"
+__version__ = "0.7.5"

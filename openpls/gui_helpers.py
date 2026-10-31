@@ -34,6 +34,15 @@ def _q(s: str) -> str:
     return '"' + str(s).replace('"', r"\"") + '"'
 
 
+LABEL_BG = "#F5F7FA"  # fond du cadre du diagramme : une flèche qui croise un chiffre passe derrière lui
+
+
+def _halo(text: str) -> str:
+    """Étiquette de flèche sur un petit fond opaque (les flèches sont dessinées avant les étiquettes)."""
+    return (f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0" CELLPADDING="1" BGCOLOR="{LABEL_BG}">'
+            f'<TR><TD>{html.escape(str(text))}</TD></TR></TABLE>>')
+
+
 SIG_POS, SIG_NEG, NONSIG = "#2E5E9E", "#B83A2E", "#98A2B3"
 
 
@@ -219,7 +228,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         return (", " + _pin(p)) if pinned and p is not None else ""
 
     head = ('  layout=neato; splines=true; overlap=true; outputorder=edgesfirst; bgcolor="transparent";' if pinned
-            else '  rankdir=LR; splines=true; nodesep=0.25; ranksep=0.9; bgcolor="transparent";')
+            else '  rankdir=LR; splines=true; nodesep=0.25; ranksep=0.9; outputorder=edgesfirst; bgcolor="transparent";')
     lines = [
         "digraph G {",
         head,
@@ -259,7 +268,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
                         val, key = meas.outer_loadings[(lv, ind)], ("outer_loading", f"{lv} -> {ind}")
                     else:
                         val, key = meas.outer_weights[(lv, ind)], ("outer_weight", f"{ind} -> {lv}")
-                    lab = f", label={_q(_edge_label(val, key, boot, label_mode, alpha))}, fontsize=9"
+                    lab = f", label={_halo(_edge_label(val, key, boot, label_mode, alpha))}, fontsize=9"
                     sig = _significant(key, boot, label_mode, alpha)
                     if label_mode == "colors" and sig is not None:
                         lab += (f', color="{SIG_GREEN}", fontcolor="{SIG_GREEN}"' if sig
@@ -278,7 +287,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
                     val, key = hoc_tbl.loc[(hoc, loc), "chargement"], ("hoc_loading", f"{hoc} -> {loc}")
                 else:
                     val, key = hoc_tbl.loc[(hoc, loc), "poids"], ("hoc_weight", f"{loc} -> {hoc}")
-                lab = f", label={_q(_edge_label(val, key, boot, label_mode, alpha))}"
+                lab = f", label={_halo(_edge_label(val, key, boot, label_mode, alpha))}"
             a, b = (hoc, loc) if model.modes[hoc] == "A" else (loc, hoc)
             lines.append(f'  {_q("lv:" + a)} -> {_q("lv:" + b)} [color="#6B7889", fontcolor="#4A5A6C", '
                          f'style=dashed, arrowsize=0.7{lab}];')
@@ -287,7 +296,7 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         if res is not None:
             v = res.path_coefficients.loc[s, d]
             key = ("direct", f"{s} -> {d}")
-            attrs = (_edge_style(v, key, boot, alpha, label_mode) + f", label={_q(_edge_label(v, key, boot, label_mode, alpha))}"
+            attrs = (_edge_style(v, key, boot, alpha, label_mode) + f", label={_halo(_edge_label(v, key, boot, label_mode, alpha))}"
                      f", penwidth={1 + 3 * min(abs(v), 1):.2f}")
         lines.append(f'  {_q("lv:" + s)} -> {_q("lv:" + d)} [{attrs}];')
     for a, b, d in getattr(model, "interactions", []):
@@ -296,9 +305,9 @@ def model_to_dot(model: Model, res=None, show_indicators: bool = True, boot: pd.
         if res is not None and name in res.path_coefficients.index:
             v = res.path_coefficients.loc[name, d]
             key = ("direct", f"{name} -> {d}")
-            attrs = _edge_style(v, key, boot, alpha, label_mode) + f", label={_q(_edge_label(v, key, boot, label_mode, alpha))}"
+            attrs = _edge_style(v, key, boot, alpha, label_mode) + f", label={_halo(_edge_label(v, key, boot, label_mode, alpha))}"
             if boot is None or key not in boot.index:
-                attrs = 'color="#B8862B", fontcolor="#8a6d1f", style=dashed' + f", label={_q(num(v))}"
+                attrs = 'color="#B8862B", fontcolor="#8a6d1f", style=dashed' + f", label={_halo(num(v))}"
         ix_p = None
         if pinned and d in lv_pos:  # sous la variable expliquée, légèrement à gauche
             ix_p = (lv_pos[d][0] - 0.45 * _IND_DIST, lv_pos[d][1] - 0.9 * _IND_DIST)
